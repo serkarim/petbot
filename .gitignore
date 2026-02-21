@@ -1,0 +1,18 @@
+# Виртуальное окружение
+venv/
+.env/
+__pycache__/
+
+# Секреты
+creds.json
+
+# Логи
+*.log
+
+# IDE
+.idea/
+.vscode/
+
+# Системные
+.DS_Store
+Thumbs.db
