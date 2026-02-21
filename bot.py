@@ -19,6 +19,11 @@ import os
 import json
 
 creds_data = json.loads(os.getenv("CREDS_JSON"))
+scope = [
+    "https://spreadsheets.google.com/feeds",
+    "https://www.googleapis.com/auth/drive"
+]
+
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_data, scope)
 TOKEN = os.getenv("TOKEN")
 SPREADSHEET_KEY = os.getenv("SPREADSHEET_KEY")
@@ -37,14 +42,6 @@ CLAN_MEMBERS = [
 # 📊 Google Sheets
 # =========================
 
-scope = [
-    "https://spreadsheets.google.com/feeds",
-    "https://www.googleapis.com/auth/drive"
-]
-
-creds = ServiceAccountCredentials.from_json_keyfile_name(
-    "creds.json", scope
-)
 
 client = gspread.authorize(creds)
 sheet = client.open_by_key(SPREADSHEET_KEY)
