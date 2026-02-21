@@ -16,7 +16,10 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 
 import os
+import json
 
+creds_data = json.loads(os.getenv("CREDS_JSON"))
+creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_data, scope)
 TOKEN = os.getenv("TOKEN")
 SPREADSHEET_KEY = os.getenv("SPREADSHEET_KEY")
 MY_NAME = os.getenv("MY_NAME")
