@@ -58,7 +58,7 @@ def append_praise(member, reason):
 
 # ---------- РАЗРЯДЫ ----------
 def get_roles_sheet():
-    return sheet.worksheet("разряд")
+    return sheet.worksheet("разряды")
 
 def get_roles_data():
     ws = get_roles_sheet()
