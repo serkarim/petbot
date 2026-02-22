@@ -39,17 +39,19 @@ def get_clan_members():
     ws = sheet.worksheet("участники клана")
     return [v for v in ws.col_values(1) if v.strip()]
 
+# ---------- ПРЕД ----------
 def append_pred(member, reason):
     ws = sheet.worksheet("преды")
     date = datetime.now().strftime("%d.%m.%Y")
     ws.append_row([member, reason, date])
 
+# ---------- ПОХВАЛА ----------
 def append_praise(member, from_user, reason):
     ws = sheet.worksheet("Похвала")
     date = datetime.now().strftime("%d.%m.%Y")
-    # Новый порядок
     ws.append_row([member, from_user, reason, date])
 
+# ---------- ЛОГИ ----------
 def append_log(action, username, user_id, to_member):
     ws = sheet.worksheet("логи")
     date = datetime.now().strftime("%d.%m.%Y %H:%M")
@@ -64,8 +66,28 @@ def clear_logs():
     ws.clear()
     ws.append_row(["Тип", "Username", "UserID", "Кому", "Дата"])
 
-# ---------- СТАТИСТИКА ----------
+# ---------- РАЗРЯДЫ ----------
+def get_roles_sheet():
+    return sheet.worksheet("разряды")
 
+def get_roles_data():
+    return get_roles_sheet().get_all_values()[1:]
+
+def get_members_by_role(role):
+    return [r[0] for r in get_roles_data() if r[1].lower() == role]
+
+def count_by_role(role):
+    return len(get_members_by_role(role))
+
+def update_role(member, new_role):
+    ws = get_roles_sheet()
+    rows = ws.get_all_values()
+    for idx, row in enumerate(rows):
+        if row[0] == member:
+            ws.update_cell(idx + 1, 2, new_role)
+            break
+
+# ---------- СТАТИСТИКА ----------
 def get_top_week():
     ws = sheet.worksheet("Похвала")
     rows = ws.get_all_values()[1:]
@@ -75,7 +97,7 @@ def get_top_week():
 
     for row in rows:
         try:
-            date = datetime.strptime(row[3], "%d.%m.%Y")  # теперь 4 столбец
+            date = datetime.strptime(row[3], "%d.%m.%Y")
             if date >= week_ago:
                 member = row[0]
                 counter[member] = counter.get(member, 0) + 1
@@ -131,7 +153,7 @@ async def back_menu(callback: types.CallbackQuery):
     )
 
 # =========================
-# 📋 КЛАН
+# 📋 КЛАН (старый функционал)
 # =========================
 
 @dp.callback_query_handler(lambda c: c.data == "clan_list")
@@ -200,6 +222,76 @@ async def process_reason(message: types.Message, state: FSMContext):
     await message.answer("Главное меню:", reply_markup=main_menu(user_id))
 
 # =========================
+# 🎖 РАЗРЯДЫ (полностью рабочие)
+# =========================
+
+@dp.callback_query_handler(lambda c: c.data == "roles_menu")
+async def roles_menu(callback: types.CallbackQuery):
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton(
+        f"🪖 Сквадные ({count_by_role('сквадной')})",
+        callback_data="role_сквадной"
+    ))
+    keyboard.add(InlineKeyboardButton(
+        f"🎯 Пехи ({count_by_role('пех')})",
+        callback_data="role_пех"
+    ))
+    keyboard.add(InlineKeyboardButton(
+        f"🔧 Техи ({count_by_role('тех')})",
+        callback_data="role_тех"
+    ))
+    keyboard.add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
+
+    await callback.message.edit_text("Выбери категорию:", reply_markup=keyboard)
+
+@dp.callback_query_handler(lambda c: c.data.startswith("role_"))
+async def show_role_members(callback: types.CallbackQuery):
+    role = callback.data.replace("role_", "")
+    members = get_members_by_role(role)
+
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    for m in members:
+        keyboard.insert(InlineKeyboardButton(m, callback_data=f"editrole_{m}"))
+
+    keyboard.add(InlineKeyboardButton("⬅ Назад", callback_data="roles_menu"))
+
+    await callback.message.edit_text(
+        f"{role.upper()} ({len(members)}):",
+        reply_markup=keyboard
+    )
+
+@dp.callback_query_handler(lambda c: c.data.startswith("editrole_"))
+async def edit_role(callback: types.CallbackQuery, state: FSMContext):
+    member = callback.data.replace("editrole_", "")
+    await state.update_data(role_member=member)
+
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(
+        InlineKeyboardButton("🪖 Сквадной", callback_data="setrole_сквадной"),
+        InlineKeyboardButton("🎯 Пех", callback_data="setrole_пех"),
+        InlineKeyboardButton("🔧 Тех", callback_data="setrole_тех")
+    )
+    keyboard.add(InlineKeyboardButton("⬅ Назад", callback_data="roles_menu"))
+
+    await callback.message.edit_text(
+        f"Переназначить роль для {member}:",
+        reply_markup=keyboard
+    )
+
+@dp.callback_query_handler(lambda c: c.data.startswith("setrole_"))
+async def set_new_role(callback: types.CallbackQuery, state: FSMContext):
+    new_role = callback.data.replace("setrole_", "")
+    data = await state.get_data()
+    member = data.get("role_member")
+
+    update_role(member, new_role)
+
+    await callback.message.edit_text(
+        f"Роль для {member} обновлена на {new_role}",
+        reply_markup=main_menu(callback.from_user.id)
+    )
+
+# =========================
 # 📊 СТАТИСТИКА
 # =========================
 
@@ -218,6 +310,32 @@ async def stats(callback: types.CallbackQuery):
     keyboard.add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
 
     await callback.message.edit_text(text, reply_markup=keyboard)
+
+# =========================
+# 📝 ЛОГИ (и преды, и похвала)
+# =========================
+
+@dp.callback_query_handler(lambda c: c.data == "logs")
+async def logs(callback: types.CallbackQuery):
+    logs_data = get_logs()[-10:]
+
+    text = "Последние 10 действий:\n\n"
+    for row in logs_data:
+        text += " | ".join(row) + "\n"
+
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton("🗑 Очистить логи", callback_data="clear_logs"))
+    keyboard.add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
+
+    await callback.message.edit_text(text, reply_markup=keyboard)
+
+@dp.callback_query_handler(lambda c: c.data == "clear_logs")
+async def clear_logs_handler(callback: types.CallbackQuery):
+    clear_logs()
+    await callback.message.edit_text(
+        "Логи очищены ✅",
+        reply_markup=main_menu(callback.from_user.id)
+    )
 
 # =========================
 # 🚀 START
