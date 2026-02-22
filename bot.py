@@ -104,8 +104,22 @@ def get_top_week():
         except:
             continue
 
-    sorted_data = sorted(counter.items(), key=lambda x: x[1], reverse=True)
-    return sorted_data[:5]
+    return sorted(counter.items(), key=lambda x: x[1], reverse=True)[:5]
+
+# ---------- ЖАЛОБЫ ----------
+def add_complaint(from_user, against, reason):
+    ws = sheet.worksheet("жалобы")
+    date = datetime.now().strftime("%d.%m.%Y")
+    ws.append_row([from_user, against, reason, date, "АКТИВНА"])
+
+def get_active_complaints():
+    ws = sheet.worksheet("жалобы")
+    rows = ws.get_all_values()
+    return [r for r in rows[1:] if len(r) >= 5 and r[4] == "АКТИВНА"]
+
+def close_complaint(index):
+    ws = sheet.worksheet("жалобы")
+    ws.update_cell(index + 2, 5, "ЗАКРЫТА")
 
 # =========================
 # 🤖 INIT
@@ -123,6 +137,7 @@ def main_menu(user_id):
     keyboard = InlineKeyboardMarkup()
     keyboard.add(InlineKeyboardButton("📋 Список клана", callback_data="clan_list"))
     keyboard.add(InlineKeyboardButton("📊 Статистика", callback_data="stats"))
+    keyboard.add(InlineKeyboardButton("⚖ Жалобы", callback_data="complaints"))
 
     if user_id in ADMINS:
         keyboard.add(InlineKeyboardButton("🎖 Разряды", callback_data="roles_menu"))
@@ -136,6 +151,7 @@ def main_menu(user_id):
 
 class ActionState(StatesGroup):
     waiting_reason = State()
+    waiting_complaint = State()
 
 # =========================
 # START
@@ -153,7 +169,7 @@ async def back_menu(callback: types.CallbackQuery):
     )
 
 # =========================
-# 📋 КЛАН (старый функционал)
+# 📋 КЛАН
 # =========================
 
 @dp.callback_query_handler(lambda c: c.data == "clan_list")
@@ -179,6 +195,7 @@ async def member_selected(callback: types.CallbackQuery, state: FSMContext):
         keyboard.add(InlineKeyboardButton("⚠ Пред", callback_data="action_pred"))
 
     keyboard.add(InlineKeyboardButton("👏 Похвала", callback_data="action_praise"))
+    keyboard.add(InlineKeyboardButton("⚖ Жалоба", callback_data="action_complaint"))
     keyboard.add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
 
     await callback.message.edit_text(
@@ -193,12 +210,24 @@ async def action_selected(callback: types.CallbackQuery, state: FSMContext):
     await ActionState.waiting_reason.set()
     await callback.message.answer("Напиши причину (или /cancel):")
 
+# =========================
+# ❌ Отмена
+# =========================
+
+@dp.message_handler(commands=["cancel"], state="*")
+async def cancel(message: types.Message, state: FSMContext):
+    await state.finish()
+    await message.answer("Отменено", reply_markup=main_menu(message.from_user.id))
+
+# =========================
+# ✍ Запись (пред / похвала / жалоба)
+# =========================
+
 @dp.message_handler(state=ActionState.waiting_reason)
 async def process_reason(message: types.Message, state: FSMContext):
     data = await state.get_data()
     member = data["member"]
     action = data["action"]
-    reason = message.text
 
     user = message.from_user
     username = f"@{user.username}" if user.username else user.full_name
@@ -206,23 +235,28 @@ async def process_reason(message: types.Message, state: FSMContext):
 
     if action == "pred":
         if user_id not in ADMINS:
-            await message.answer("У тебя нет прав ❌")
+            await message.answer("Нет прав ❌")
             await state.finish()
             return
 
-        append_pred(member, reason)
+        append_pred(member, message.text)
         append_log("ПРЕД", username, user_id, member)
         await message.answer("⚠ Пред записан")
-    else:
-        append_praise(member, username, reason)
+
+    elif action == "praise":
+        append_praise(member, username, message.text)
         append_log("ПОХВАЛА", username, user_id, member)
         await message.answer("👏 Похвала записана")
+
+    elif action == "complaint":
+        add_complaint(username, member, message.text)
+        await message.answer("⚖ Жалоба отправлена")
 
     await state.finish()
     await message.answer("Главное меню:", reply_markup=main_menu(user_id))
 
 # =========================
-# 🎖 РАЗРЯДЫ (полностью рабочие)
+# 🎖 РАЗРЯДЫ
 # =========================
 
 @dp.callback_query_handler(lambda c: c.data == "roles_menu")
@@ -244,53 +278,6 @@ async def roles_menu(callback: types.CallbackQuery):
 
     await callback.message.edit_text("Выбери категорию:", reply_markup=keyboard)
 
-@dp.callback_query_handler(lambda c: c.data.startswith("role_"))
-async def show_role_members(callback: types.CallbackQuery):
-    role = callback.data.replace("role_", "")
-    members = get_members_by_role(role)
-
-    keyboard = InlineKeyboardMarkup(row_width=2)
-    for m in members:
-        keyboard.insert(InlineKeyboardButton(m, callback_data=f"editrole_{m}"))
-
-    keyboard.add(InlineKeyboardButton("⬅ Назад", callback_data="roles_menu"))
-
-    await callback.message.edit_text(
-        f"{role.upper()} ({len(members)}):",
-        reply_markup=keyboard
-    )
-
-@dp.callback_query_handler(lambda c: c.data.startswith("editrole_"))
-async def edit_role(callback: types.CallbackQuery, state: FSMContext):
-    member = callback.data.replace("editrole_", "")
-    await state.update_data(role_member=member)
-
-    keyboard = InlineKeyboardMarkup()
-    keyboard.add(
-        InlineKeyboardButton("🪖 Сквадной", callback_data="setrole_сквадной"),
-        InlineKeyboardButton("🎯 Пех", callback_data="setrole_пех"),
-        InlineKeyboardButton("🔧 Тех", callback_data="setrole_тех")
-    )
-    keyboard.add(InlineKeyboardButton("⬅ Назад", callback_data="roles_menu"))
-
-    await callback.message.edit_text(
-        f"Переназначить роль для {member}:",
-        reply_markup=keyboard
-    )
-
-@dp.callback_query_handler(lambda c: c.data.startswith("setrole_"))
-async def set_new_role(callback: types.CallbackQuery, state: FSMContext):
-    new_role = callback.data.replace("setrole_", "")
-    data = await state.get_data()
-    member = data.get("role_member")
-
-    update_role(member, new_role)
-
-    await callback.message.edit_text(
-        f"Роль для {member} обновлена на {new_role}",
-        reply_markup=main_menu(callback.from_user.id)
-    )
-
 # =========================
 # 📊 СТАТИСТИКА
 # =========================
@@ -299,43 +286,115 @@ async def set_new_role(callback: types.CallbackQuery, state: FSMContext):
 async def stats(callback: types.CallbackQuery):
     top = get_top_week()
 
+    text = "🏆 ТОП 5 за неделю:\n\n"
     if not top:
         text = "За 7 дней похвалы нет."
     else:
-        text = "🏆 ТОП 5 за неделю:\n\n"
         for i, (member, count) in enumerate(top, 1):
             text += f"{i}. {member} — {count}\n"
 
-    keyboard = InlineKeyboardMarkup()
-    keyboard.add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
-
-    await callback.message.edit_text(text, reply_markup=keyboard)
+    await callback.message.edit_text(text, reply_markup=main_menu(callback.from_user.id))
 
 # =========================
-# 📝 ЛОГИ (и преды, и похвала)
+# ⚖ ЖАЛОБЫ
 # =========================
 
-@dp.callback_query_handler(lambda c: c.data == "logs")
-async def logs(callback: types.CallbackQuery):
-    logs_data = get_logs()[-10:]
-
-    text = "Последние 10 действий:\n\n"
-    for row in logs_data:
-        text += " | ".join(row) + "\n"
-
+@dp.callback_query_handler(lambda c: c.data == "complaints")
+async def complaints_menu(callback: types.CallbackQuery):
     keyboard = InlineKeyboardMarkup()
-    keyboard.add(InlineKeyboardButton("🗑 Очистить логи", callback_data="clear_logs"))
+    keyboard.add(InlineKeyboardButton("📩 Подать жалобу", callback_data="new_complaint"))
+
+    if callback.from_user.id in ADMINS:
+        keyboard.add(InlineKeyboardButton("📜 Жалобы (админ)", callback_data="list_complaints"))
+
     keyboard.add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
 
-    await callback.message.edit_text(text, reply_markup=keyboard)
+    await callback.message.edit_text("⚖ Жалобы:", reply_markup=keyboard)
 
-@dp.callback_query_handler(lambda c: c.data == "clear_logs")
-async def clear_logs_handler(callback: types.CallbackQuery):
-    clear_logs()
-    await callback.message.edit_text(
-        "Логи очищены ✅",
-        reply_markup=main_menu(callback.from_user.id)
-    )
+@dp.callback_query_handler(lambda c: c.data == "new_complaint")
+async def new_complaint(callback: types.CallbackQuery):
+    members = get_clan_members()
+    keyboard = InlineKeyboardMarkup(row_width=2)
+
+    for m in members:
+        keyboard.insert(InlineKeyboardButton(m, callback_data=f"complaint_to_{m}"))
+
+    keyboard.add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
+
+    await callback.message.edit_text("На кого жалоба?", reply_markup=keyboard)
+
+@dp.callback_query_handler(lambda c: c.data.startswith("complaint_to_"))
+async def complaint_reason(callback: types.CallbackQuery, state: FSMContext):
+    member = callback.data.replace("complaint_to_", "")
+    await state.update_data(complaint_to=member)
+    await ActionState.waiting_complaint.set()
+    await callback.message.answer("Напиши причину жалобы:")
+
+@dp.message_handler(state=ActionState.waiting_complaint)
+async def process_complaint(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    to = data["complaint_to"]
+    from_user = message.from_user.username or message.from_user.full_name
+
+    add_complaint(from_user, to, message.text)
+    await message.answer("⚖ Жалоба отправлена", reply_markup=main_menu(message.from_user.id))
+    await state.finish()
+
+# =========================
+# АДМИН: СПИСОК ЖАЛОБ
+# =========================
+
+@dp.callback_query_handler(lambda c: c.data == "list_complaints")
+async def list_complaints(callback: types.CallbackQuery):
+    complaints = get_active_complaints()
+
+    if not complaints:
+        await callback.message.edit_text("Активных жалоб нет.")
+        return
+
+    keyboard = InlineKeyboardMarkup(row_width=1)
+    for i, row in enumerate(complaints):
+        sender, against, reason, date, _ = row
+        keyboard.add(InlineKeyboardButton(
+            f"{against} — {reason} ({date})",
+            callback_data=f"complaint_{i}"
+        ))
+
+    keyboard.add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
+    await callback.message.edit_text("Активные жалобы:", reply_markup=keyboard)
+
+@dp.callback_query_handler(lambda c: c.data.startswith("complaint_"))
+async def complaint_actions(callback: types.CallbackQuery):
+    index = int(callback.data.split("_")[1])
+
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton("⚠ Выдать пред", callback_data=f"complaint_warn_{index}"))
+    keyboard.add(InlineKeyboardButton("📎 Запросить доказательства", callback_data=f"complaint_evidence_{index}"))
+    keyboard.add(InlineKeyboardButton("❌ Закрыть", callback_data=f"complaint_close_{index}"))
+
+    await callback.message.edit_text("Действия:", reply_markup=keyboard)
+
+@dp.callback_query_handler(lambda c: c.data.startswith("complaint_warn_"))
+async def complaint_warn(callback: types.CallbackQuery):
+    index = int(callback.data.split("_")[2])
+    complaints = get_active_complaints()
+    row = complaints[index]
+
+    sender, against, reason, _, _ = row
+    append_pred(against, f"Жалоба от {sender}: {reason}")
+    close_complaint(index)
+
+    await callback.message.edit_text("Пред выдан и жалоба закрыта.")
+
+@dp.callback_query_handler(lambda c: c.data.startswith("complaint_evidence_"))
+async def complaint_evidence(callback: types.CallbackQuery):
+    await callback.message.answer("Пришлите доказательства — они будут прикреплены к жалобе.")
+
+@dp.callback_query_handler(lambda c: c.data.startswith("complaint_close_"))
+async def complaint_close(callback: types.CallbackQuery):
+    index = int(callback.data.split("_")[2])
+    close_complaint(index)
+    await callback.message.edit_text("Жалоба закрыта.")
 
 # =========================
 # 🚀 START
