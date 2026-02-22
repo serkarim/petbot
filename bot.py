@@ -19,6 +19,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 TOKEN = os.getenv("TOKEN")
 SPREADSHEET_KEY = os.getenv("SPREADSHEET_KEY")
+ADMINS = list(map(int, os.getenv("ADMINS", "").split(",")))
 
 scope = [
     "https://spreadsheets.google.com/feeds",
@@ -43,10 +44,11 @@ def append_pred(member, reason):
     date = datetime.now().strftime("%d.%m.%Y")
     ws.append_row([member, reason, date])
 
-def append_praise(member, reason):
+def append_praise(member, from_user, reason):
     ws = sheet.worksheet("Похвала")
     date = datetime.now().strftime("%d.%m.%Y")
-    ws.append_row([member, reason, date])
+    # Новый порядок
+    ws.append_row([member, from_user, reason, date])
 
 def append_log(action, username, user_id, to_member):
     ws = sheet.worksheet("логи")
@@ -62,28 +64,6 @@ def clear_logs():
     ws.clear()
     ws.append_row(["Тип", "Username", "UserID", "Кому", "Дата"])
 
-# ---------- РАЗРЯДЫ ----------
-
-def get_roles_sheet():
-    return sheet.worksheet("разряды")
-
-def get_roles_data():
-    return get_roles_sheet().get_all_values()[1:]
-
-def get_members_by_role(role):
-    return [r[0] for r in get_roles_data() if r[1].lower() == role]
-
-def count_by_role(role):
-    return len(get_members_by_role(role))
-
-def update_role(member, new_role):
-    ws = get_roles_sheet()
-    rows = ws.get_all_values()
-    for idx, row in enumerate(rows):
-        if row[0] == member:
-            ws.update_cell(idx + 1, 2, new_role)
-            break
-
 # ---------- СТАТИСТИКА ----------
 
 def get_top_week():
@@ -95,7 +75,7 @@ def get_top_week():
 
     for row in rows:
         try:
-            date = datetime.strptime(row[2], "%d.%m.%Y")
+            date = datetime.strptime(row[3], "%d.%m.%Y")  # теперь 4 столбец
             if date >= week_ago:
                 member = row[0]
                 counter[member] = counter.get(member, 0) + 1
@@ -117,12 +97,15 @@ dp = Dispatcher(bot, storage=MemoryStorage())
 # MENU
 # =========================
 
-def main_menu():
+def main_menu(user_id):
     keyboard = InlineKeyboardMarkup()
     keyboard.add(InlineKeyboardButton("📋 Список клана", callback_data="clan_list"))
-    keyboard.add(InlineKeyboardButton("🎖 Разряды", callback_data="roles_menu"))
     keyboard.add(InlineKeyboardButton("📊 Статистика", callback_data="stats"))
-    keyboard.add(InlineKeyboardButton("📝 Логи", callback_data="logs"))
+
+    if user_id in ADMINS:
+        keyboard.add(InlineKeyboardButton("🎖 Разряды", callback_data="roles_menu"))
+        keyboard.add(InlineKeyboardButton("📝 Логи", callback_data="logs"))
+
     return keyboard
 
 # =========================
@@ -138,11 +121,14 @@ class ActionState(StatesGroup):
 
 @dp.message_handler(commands=["start"])
 async def start(message: types.Message):
-    await message.answer("Главное меню:", reply_markup=main_menu())
+    await message.answer("Главное меню:", reply_markup=main_menu(message.from_user.id))
 
 @dp.callback_query_handler(lambda c: c.data == "back_menu")
 async def back_menu(callback: types.CallbackQuery):
-    await callback.message.edit_text("Главное меню:", reply_markup=main_menu())
+    await callback.message.edit_text(
+        "Главное меню:",
+        reply_markup=main_menu(callback.from_user.id)
+    )
 
 # =========================
 # 📋 КЛАН
@@ -166,10 +152,11 @@ async def member_selected(callback: types.CallbackQuery, state: FSMContext):
     await state.update_data(member=member)
 
     keyboard = InlineKeyboardMarkup()
-    keyboard.add(
-        InlineKeyboardButton("⚠ Пред", callback_data="action_pred"),
-        InlineKeyboardButton("👏 Похвала", callback_data="action_praise")
-    )
+
+    if callback.from_user.id in ADMINS:
+        keyboard.add(InlineKeyboardButton("⚠ Пред", callback_data="action_pred"))
+
+    keyboard.add(InlineKeyboardButton("👏 Похвала", callback_data="action_praise"))
     keyboard.add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
 
     await callback.message.edit_text(
@@ -196,38 +183,21 @@ async def process_reason(message: types.Message, state: FSMContext):
     user_id = user.id
 
     if action == "pred":
+        if user_id not in ADMINS:
+            await message.answer("У тебя нет прав ❌")
+            await state.finish()
+            return
+
         append_pred(member, reason)
         append_log("ПРЕД", username, user_id, member)
-        await message.answer("⚠ Пред записан", reply_markup=main_menu())
+        await message.answer("⚠ Пред записан")
     else:
-        append_praise(member, reason)
+        append_praise(member, username, reason)
         append_log("ПОХВАЛА", username, user_id, member)
-        await message.answer("👏 Похвала записана", reply_markup=main_menu())
+        await message.answer("👏 Похвала записана")
 
     await state.finish()
-
-# =========================
-# 🎖 РАЗРЯДЫ
-# =========================
-
-@dp.callback_query_handler(lambda c: c.data == "roles_menu")
-async def roles_menu(callback: types.CallbackQuery):
-    keyboard = InlineKeyboardMarkup()
-    keyboard.add(InlineKeyboardButton(
-        f"🪖 Сквадные ({count_by_role('сквадной')})",
-        callback_data="role_сквадной"
-    ))
-    keyboard.add(InlineKeyboardButton(
-        f"🎯 Пехи ({count_by_role('пех')})",
-        callback_data="role_пех"
-    ))
-    keyboard.add(InlineKeyboardButton(
-        f"🔧 Техи ({count_by_role('тех')})",
-        callback_data="role_тех"
-    ))
-    keyboard.add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
-
-    await callback.message.edit_text("Выбери категорию:", reply_markup=keyboard)
+    await message.answer("Главное меню:", reply_markup=main_menu(user_id))
 
 # =========================
 # 📊 СТАТИСТИКА
@@ -248,32 +218,6 @@ async def stats(callback: types.CallbackQuery):
     keyboard.add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
 
     await callback.message.edit_text(text, reply_markup=keyboard)
-
-# =========================
-# 📝 ЛОГИ
-# =========================
-
-@dp.callback_query_handler(lambda c: c.data == "logs")
-async def logs(callback: types.CallbackQuery):
-    logs_data = get_logs()[-10:]
-
-    text = "Последние 10 действий:\n\n"
-    for row in logs_data:
-        text += " | ".join(row) + "\n"
-
-    keyboard = InlineKeyboardMarkup()
-    keyboard.add(InlineKeyboardButton("🗑 Очистить логи", callback_data="clear_logs"))
-    keyboard.add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
-
-    await callback.message.edit_text(text, reply_markup=keyboard)
-
-@dp.callback_query_handler(lambda c: c.data == "clear_logs")
-async def clear_logs_handler(callback: types.CallbackQuery):
-    clear_logs()
-    await callback.message.edit_text(
-        "Логи очищены ✅",
-        reply_markup=main_menu()
-    )
 
 # =========================
 # 🚀 START
