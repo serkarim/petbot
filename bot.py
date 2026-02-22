@@ -20,7 +20,6 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 TOKEN = os.getenv("TOKEN")
 SPREADSHEET_KEY = os.getenv("SPREADSHEET_KEY")
-MY_NAME = os.getenv("MY_NAME")
 
 ADMINS = os.getenv("ADMINS", "")
 ADMINS = [int(x) for x in ADMINS.split(",") if x.strip()]
@@ -46,19 +45,40 @@ creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_data, scope)
 client = gspread.authorize(creds)
 sheet = client.open_by_key(SPREADSHEET_KEY)
 
+# ---------- Клан ----------
 def get_clan_members():
     ws = sheet.worksheet("участники клана")
     return [v for v in ws.col_values(1) if v.strip()]
 
-def append_pred(member, reason):
-    ws = sheet.worksheet("преды")
-    date = datetime.now().strftime("%d.%m.%Y")
-    ws.append_row([member, reason, date])
-
+# ---------- Похвала ----------
 def append_praise(member, from_user, reason):
     ws = sheet.worksheet("Похвала")
     date = datetime.now().strftime("%d.%m.%Y")
     ws.append_row([member, from_user, reason, date])
+
+# ---------- Разряды ----------
+def get_roles_sheet():
+    return sheet.worksheet("разряды")
+
+def get_roles_data():
+    ws = get_roles_sheet()
+    rows = ws.get_all_values()
+    return rows[1:] if len(rows) > 1 else []
+
+def get_members_by_role(role):
+    return [r[0] for r in get_roles_data() if len(r) > 1 and r[1].lower() == role]
+
+def count_by_role(role):
+    return len(get_members_by_role(role))
+
+def update_role(member, new_role):
+    ws = get_roles_sheet()
+    rows = ws.get_all_values()
+
+    for idx, row in enumerate(rows):
+        if row and row[0] == member:
+            ws.update_cell(idx + 1, 2, new_role)
+            break
 
 # =========================
 # 🤖 INIT
@@ -77,9 +97,6 @@ class PraiseState(StatesGroup):
     waiting_nick = State()
     waiting_reason = State()
 
-class AdminActionState(StatesGroup):
-    waiting_reason = State()
-
 # =========================
 # MENU
 # =========================
@@ -88,7 +105,7 @@ def main_menu(user_id):
     keyboard = InlineKeyboardMarkup()
 
     if is_admin(user_id):
-        keyboard.add(InlineKeyboardButton("📋 Список клана", callback_data="clan_list"))
+        keyboard.add(InlineKeyboardButton("🎖 Разряды", callback_data="roles_menu"))
         keyboard.add(InlineKeyboardButton("📊 Статистика", callback_data="stats"))
         keyboard.add(InlineKeyboardButton("🧾 Логи", callback_data="logs_menu"))
     else:
@@ -141,7 +158,7 @@ async def praise_reason(message: types.Message, state: FSMContext):
     await state.finish()
 
 # =========================
-# 🧾 ЛОГИ (только админы)
+# 🧾 Логи (только админы)
 # =========================
 
 @dp.callback_query_handler(lambda c: c.data == "logs_menu")
@@ -161,11 +178,11 @@ async def show_logs(callback: types.CallbackQuery):
     ws = sheet.worksheet("Похвала")
     rows = ws.get_all_values()[1:]
 
+    if not rows:
+        await callback.message.answer("Логи пустые.")
+        return
+
     text = "\n".join([f"{r[1]} → {r[0]} ({r[2]})" for r in rows[-10:]])
-
-    if not text:
-        text = "Логи пустые."
-
     await callback.message.answer(text)
 
 @dp.callback_query_handler(lambda c: c.data == "clear_logs")
@@ -176,7 +193,7 @@ async def clear_logs(callback: types.CallbackQuery):
     await callback.message.answer("🗑 Логи очищены")
 
 # =========================
-# 📊 ТОП 5 ЗА НЕДЕЛЮ
+# 📊 ТОП 5 ЗА 7 ДНЕЙ
 # =========================
 
 @dp.callback_query_handler(lambda c: c.data == "stats")
@@ -185,30 +202,40 @@ async def stats(callback: types.CallbackQuery):
         return
 
     ws = sheet.worksheet("Похвала")
-    rows = ws.get_all_values()[1:]
+    rows = ws.get_all_values()
+
+    if len(rows) <= 1:
+        await callback.message.answer("Нет данных.")
+        return
+
+    rows = rows[1:]
 
     today = datetime.now()
     week_ago = today - timedelta(days=7)
 
     weekly = []
 
-    for r in rows:
+    for row in rows:
+        if len(row) < 4:
+            continue
+
         try:
-            date_obj = datetime.strptime(r[3], "%d.%m.%Y")
-            if date_obj >= week_ago:
-                weekly.append(r[0])
+            date_obj = datetime.strptime(row[3], "%d.%m.%Y")
         except:
             continue
+
+        if week_ago.date() <= date_obj.date() <= today.date():
+            weekly.append(row[0])
+
+    if not weekly:
+        await callback.message.answer("За последние 7 дней похвал нет.")
+        return
 
     counter = Counter(weekly)
     top5 = counter.most_common(5)
 
-    if not top5:
-        await callback.message.answer("Нет похвал за неделю.")
-        return
-
-    text = "🏆 ТОП 5 за неделю:\n\n"
     medals = ["🥇", "🥈", "🥉", "🏅", "🏅"]
+    text = "🏆 ТОП 5 за последние 7 дней:\n\n"
 
     for i, (nick, count) in enumerate(top5):
         text += f"{medals[i]} {nick} — {count}\n"
@@ -216,7 +243,80 @@ async def stats(callback: types.CallbackQuery):
     await callback.message.answer(text)
 
 # =========================
-# 🔙 Назад
+# 🎖 Разряды
+# =========================
+
+@dp.callback_query_handler(lambda c: c.data == "roles_menu")
+async def roles_menu(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton(
+        f"🪖 Сквадные ({count_by_role('сквадной')})",
+        callback_data="role_сквадной"
+    ))
+    keyboard.add(InlineKeyboardButton(
+        f"🎯 Пехи ({count_by_role('пех')})",
+        callback_data="role_пех"
+    ))
+    keyboard.add(InlineKeyboardButton(
+        f"🔧 Техи ({count_by_role('тех')})",
+        callback_data="role_тех"
+    ))
+    keyboard.add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
+
+    await callback.message.edit_text("Выбери категорию:", reply_markup=keyboard)
+
+@dp.callback_query_handler(lambda c: c.data.startswith("role_"))
+async def show_role_members(callback: types.CallbackQuery):
+    role = callback.data.replace("role_", "")
+    members = get_members_by_role(role)
+
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    for m in members:
+        keyboard.insert(InlineKeyboardButton(m, callback_data=f"editrole_{m}"))
+
+    keyboard.add(InlineKeyboardButton("⬅ Назад", callback_data="roles_menu"))
+
+    await callback.message.edit_text(
+        f"{role.upper()} ({len(members)}):",
+        reply_markup=keyboard
+    )
+
+@dp.callback_query_handler(lambda c: c.data.startswith("editrole_"))
+async def edit_role(callback: types.CallbackQuery, state: FSMContext):
+    member = callback.data.replace("editrole_", "")
+    await state.update_data(role_member=member)
+
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(
+        InlineKeyboardButton("🪖 Сквадной", callback_data="setrole_сквадной"),
+        InlineKeyboardButton("🎯 Пех", callback_data="setrole_пех"),
+        InlineKeyboardButton("🔧 Тех", callback_data="setrole_тех")
+    )
+    keyboard.add(InlineKeyboardButton("⬅ Назад", callback_data="roles_menu"))
+
+    await callback.message.edit_text(
+        f"Переназначить роль для {member}:",
+        reply_markup=keyboard
+    )
+
+@dp.callback_query_handler(lambda c: c.data.startswith("setrole_"))
+async def set_new_role(callback: types.CallbackQuery, state: FSMContext):
+    new_role = callback.data.replace("setrole_", "")
+    data = await state.get_data()
+    member = data.get("role_member")
+
+    update_role(member, new_role)
+
+    await callback.message.edit_text(
+        f"Роль для {member} обновлена на {new_role}",
+        reply_markup=main_menu(callback.from_user.id)
+    )
+
+# =========================
+# Назад
 # =========================
 
 @dp.callback_query_handler(lambda c: c.data == "back_menu")
