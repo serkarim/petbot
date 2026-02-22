@@ -106,11 +106,11 @@ def get_top_week():
 
     return sorted(counter.items(), key=lambda x: x[1], reverse=True)[:5]
 
-# ---------- ЖАЛОБЫ ----------
+# ---------- ЖАЛОБЫ (строки) ----------
 def add_complaint(from_user, to_member, reason):
     ws = sheet.worksheet("жалобы")
     date = datetime.now().strftime("%d.%m.%Y %H:%M")
-    ws.append_row([from_user, to_member, reason, date])
+    ws.append_row([from_user, to_member, reason, date, "активна"])
 
 def get_complaints():
     ws = sheet.worksheet("жалобы")
@@ -150,7 +150,6 @@ def main_menu(user_id):
 
 class ActionState(StatesGroup):
     waiting_reason = State()
-    waiting_complaint = State()
 
 # =========================
 # START
@@ -356,7 +355,7 @@ async def clear_logs_handler(callback: types.CallbackQuery):
     await callback.message.edit_text("Логи очищены ✅", reply_markup=main_menu(callback.from_user.id))
 
 # =========================
-# ⚖ ЖАЛОБЫ
+# ⚖ ЖАЛОБЫ (строки)
 # =========================
 
 @dp.callback_query_handler(lambda c: c.data == "complaints")
@@ -369,10 +368,12 @@ async def complaints_menu(callback: types.CallbackQuery):
     keyboard = InlineKeyboardMarkup()
 
     for i, row in enumerate(rows):
-        if len(row) < 4:
-            continue
+        if len(row) < 5:
+            row += ["активна"]
+
+        status = row[4]
         keyboard.add(InlineKeyboardButton(
-            f"⚖ {row[1]} ({row[3]})",
+            f"⚖ {row[1]} | {status}",
             callback_data=f"complaint_{i}"
         ))
 
@@ -384,13 +385,22 @@ async def complaints_menu(callback: types.CallbackQuery):
 async def complaint_actions(callback: types.CallbackQuery):
     data = callback.data.split("_")
 
+    # закрытие жалобы
     if data[1] == "close":
+        try:
+            index = int(data[2])
+        except:
+            await callback.answer("Ошибка ❌")
+            return
+
+        close_complaint(index)
         await callback.message.edit_text("Жалоба закрыта ✅")
         return
 
+    # открытие жалобы
     try:
         index = int(data[1])
-    except ValueError:
+    except:
         await callback.answer("Ошибка ❌")
         return
 
@@ -400,16 +410,28 @@ async def complaint_actions(callback: types.CallbackQuery):
         return
 
     row = rows[index]
+    if len(row) < 5:
+        row += ["активна"]
+
     text = (
-        f"ЖАЛОБА #{index}\n"
+        f"⚖ ЖАЛОБА #{index}\n"
         f"От: {row[0]}\n"
         f"На: {row[1]}\n"
         f"Причина: {row[2]}\n"
-        f"Дата: {row[3]}"
+        f"Дата: {row[3]}\n"
+        f"Статус: {row[4]}"
     )
 
     keyboard = InlineKeyboardMarkup()
-    keyboard.add(InlineKeyboardButton("❌ Закрыть", callback_data="complaint_close"))
+    keyboard.add(
+        InlineKeyboardButton(
+            "❌ Закрыть",
+            callback_data=f"complaint_close_{index}"
+        )
+    )
+    keyboard.add(
+        InlineKeyboardButton("🏠 В меню", callback_data="back_menu")
+    )
 
     await callback.message.edit_text(text, reply_markup=keyboard)
 
