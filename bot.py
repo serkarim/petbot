@@ -97,6 +97,9 @@ class PraiseState(StatesGroup):
     waiting_nick = State()
     waiting_reason = State()
 
+class AdminState(StatesGroup):
+    waiting_reason = State()
+
 # =========================
 # MENU
 # =========================
@@ -105,6 +108,7 @@ def main_menu(user_id):
     keyboard = InlineKeyboardMarkup()
 
     if is_admin(user_id):
+        keyboard.add(InlineKeyboardButton("📋 Список клана", callback_data="clan_list"))
         keyboard.add(InlineKeyboardButton("🎖 Разряды", callback_data="roles_menu"))
         keyboard.add(InlineKeyboardButton("📊 Статистика", callback_data="stats"))
         keyboard.add(InlineKeyboardButton("🧾 Логи", callback_data="logs_menu"))
@@ -120,12 +124,33 @@ def main_menu(user_id):
 @dp.message_handler(commands=["start"])
 async def start(message: types.Message):
     await message.answer(
-        f"Твой Telegram ID: {message.from_user.id}",
+        "Главное меню:",
         reply_markup=main_menu(message.from_user.id)
     )
 
 # =========================
-# 👏 Участники — похвала
+# 📋 СПИСОК КЛАНА
+# =========================
+
+@dp.callback_query_handler(lambda c: c.data == "clan_list")
+async def clan_list(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+
+    members = get_clan_members()
+
+    if not members:
+        await callback.message.answer("Список клана пуст.")
+        return
+
+    text = "📋 Участники клана:\n\n"
+    for m in members:
+        text += f"• {m}\n"
+
+    await callback.message.answer(text)
+
+# =========================
+# 👏 Похвала (участники)
 # =========================
 
 @dp.callback_query_handler(lambda c: c.data == "give_praise")
@@ -158,7 +183,7 @@ async def praise_reason(message: types.Message, state: FSMContext):
     await state.finish()
 
 # =========================
-# 🧾 Логи (только админы)
+# 🧾 ЛОГИ
 # =========================
 
 @dp.callback_query_handler(lambda c: c.data == "logs_menu")
@@ -193,7 +218,7 @@ async def clear_logs(callback: types.CallbackQuery):
     await callback.message.answer("🗑 Логи очищены")
 
 # =========================
-# 📊 ТОП 5 ЗА 7 ДНЕЙ
+# 📊 СТАТИСТИКА (СТРОГО 7 ДНЕЙ)
 # =========================
 
 @dp.callback_query_handler(lambda c: c.data == "stats")
@@ -210,7 +235,7 @@ async def stats(callback: types.CallbackQuery):
 
     rows = rows[1:]
 
-    today = datetime.now()
+    today = datetime.now().date()
     week_ago = today - timedelta(days=7)
 
     weekly = []
@@ -220,11 +245,11 @@ async def stats(callback: types.CallbackQuery):
             continue
 
         try:
-            date_obj = datetime.strptime(row[3], "%d.%m.%Y")
+            date_obj = datetime.strptime(row[3], "%d.%m.%Y").date()
         except:
             continue
 
-        if week_ago.date() <= date_obj.date() <= today.date():
+        if week_ago <= date_obj <= today:
             weekly.append(row[0])
 
     if not weekly:
@@ -243,7 +268,7 @@ async def stats(callback: types.CallbackQuery):
     await callback.message.answer(text)
 
 # =========================
-# 🎖 Разряды
+# 🎖 РАЗРЯДЫ
 # =========================
 
 @dp.callback_query_handler(lambda c: c.data == "roles_menu")
