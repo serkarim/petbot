@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import json
 
@@ -14,7 +14,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 # =========================
-# 🔐 НАСТРОЙКИ
+# 🔐 ENV
 # =========================
 
 TOKEN = os.getenv("TOKEN")
@@ -48,15 +48,62 @@ def append_praise(member, reason):
     date = datetime.now().strftime("%d.%m.%Y")
     ws.append_row([member, reason, date])
 
-def append_log(username, user_id, to_member):
+def append_log(action, username, user_id, to_member):
     ws = sheet.worksheet("логи")
     date = datetime.now().strftime("%d.%m.%Y %H:%M")
-    ws.append_row([
-        username,
-        user_id,
-        to_member,
-        date
-    ])
+    ws.append_row([action, username, user_id, to_member, date])
+
+def get_logs():
+    ws = sheet.worksheet("логи")
+    return ws.get_all_values()
+
+def clear_logs():
+    ws = sheet.worksheet("логи")
+    ws.clear()
+    ws.append_row(["Тип", "Username", "UserID", "Кому", "Дата"])
+
+# ---------- РАЗРЯДЫ ----------
+
+def get_roles_sheet():
+    return sheet.worksheet("разряды")
+
+def get_roles_data():
+    return get_roles_sheet().get_all_values()[1:]
+
+def get_members_by_role(role):
+    return [r[0] for r in get_roles_data() if r[1].lower() == role]
+
+def count_by_role(role):
+    return len(get_members_by_role(role))
+
+def update_role(member, new_role):
+    ws = get_roles_sheet()
+    rows = ws.get_all_values()
+    for idx, row in enumerate(rows):
+        if row[0] == member:
+            ws.update_cell(idx + 1, 2, new_role)
+            break
+
+# ---------- СТАТИСТИКА ----------
+
+def get_top_week():
+    ws = sheet.worksheet("Похвала")
+    rows = ws.get_all_values()[1:]
+    week_ago = datetime.now() - timedelta(days=7)
+
+    counter = {}
+
+    for row in rows:
+        try:
+            date = datetime.strptime(row[2], "%d.%m.%Y")
+            if date >= week_ago:
+                member = row[0]
+                counter[member] = counter.get(member, 0) + 1
+        except:
+            continue
+
+    sorted_data = sorted(counter.items(), key=lambda x: x[1], reverse=True)
+    return sorted_data[:5]
 
 # =========================
 # 🤖 INIT
@@ -73,6 +120,9 @@ dp = Dispatcher(bot, storage=MemoryStorage())
 def main_menu():
     keyboard = InlineKeyboardMarkup()
     keyboard.add(InlineKeyboardButton("📋 Список клана", callback_data="clan_list"))
+    keyboard.add(InlineKeyboardButton("🎖 Разряды", callback_data="roles_menu"))
+    keyboard.add(InlineKeyboardButton("📊 Статистика", callback_data="stats"))
+    keyboard.add(InlineKeyboardButton("📝 Логи", callback_data="logs"))
     return keyboard
 
 # =========================
@@ -83,7 +133,7 @@ class ActionState(StatesGroup):
     waiting_reason = State()
 
 # =========================
-# 🏠 Главное меню
+# START
 # =========================
 
 @dp.message_handler(commands=["start"])
@@ -95,7 +145,7 @@ async def back_menu(callback: types.CallbackQuery):
     await callback.message.edit_text("Главное меню:", reply_markup=main_menu())
 
 # =========================
-# 📋 Список клана
+# 📋 КЛАН
 # =========================
 
 @dp.callback_query_handler(lambda c: c.data == "clan_list")
@@ -108,14 +158,7 @@ async def clan_list(callback: types.CallbackQuery):
 
     keyboard.add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
 
-    try:
-        await callback.message.edit_text("Выбери участника:", reply_markup=keyboard)
-    except:
-        await callback.message.answer("Выбери участника:", reply_markup=keyboard)
-
-# =========================
-# 👤 Выбор участника
-# =========================
+    await callback.message.edit_text("Выбери участника:", reply_markup=keyboard)
 
 @dp.callback_query_handler(lambda c: c.data.startswith("member_"))
 async def member_selected(callback: types.CallbackQuery, state: FSMContext):
@@ -127,18 +170,12 @@ async def member_selected(callback: types.CallbackQuery, state: FSMContext):
         InlineKeyboardButton("⚠ Пред", callback_data="action_pred"),
         InlineKeyboardButton("👏 Похвала", callback_data="action_praise")
     )
-    keyboard.add(
-        InlineKeyboardButton("🏠 В меню", callback_data="back_menu")
-    )
+    keyboard.add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
 
     await callback.message.edit_text(
         f"Выбран: {member}\n\nВыбери действие:",
         reply_markup=keyboard
     )
-
-# =========================
-# 🎯 Выбор действия
-# =========================
 
 @dp.callback_query_handler(lambda c: c.data.startswith("action_"))
 async def action_selected(callback: types.CallbackQuery, state: FSMContext):
@@ -146,19 +183,6 @@ async def action_selected(callback: types.CallbackQuery, state: FSMContext):
     await state.update_data(action=action)
     await ActionState.waiting_reason.set()
     await callback.message.answer("Напиши причину (или /cancel):")
-
-# =========================
-# ❌ Отмена
-# =========================
-
-@dp.message_handler(commands=["cancel"], state="*")
-async def cancel(message: types.Message, state: FSMContext):
-    await state.finish()
-    await message.answer("Отменено", reply_markup=main_menu())
-
-# =========================
-# ✍ Запись в таблицу
-# =========================
 
 @dp.message_handler(state=ActionState.waiting_reason)
 async def process_reason(message: types.Message, state: FSMContext):
@@ -173,13 +197,83 @@ async def process_reason(message: types.Message, state: FSMContext):
 
     if action == "pred":
         append_pred(member, reason)
+        append_log("ПРЕД", username, user_id, member)
         await message.answer("⚠ Пред записан", reply_markup=main_menu())
     else:
         append_praise(member, reason)
-        append_log(username, user_id, member)  # ЛОГ ТОЛЬКО ДЛЯ ПОХВАЛЫ
+        append_log("ПОХВАЛА", username, user_id, member)
         await message.answer("👏 Похвала записана", reply_markup=main_menu())
 
     await state.finish()
+
+# =========================
+# 🎖 РАЗРЯДЫ
+# =========================
+
+@dp.callback_query_handler(lambda c: c.data == "roles_menu")
+async def roles_menu(callback: types.CallbackQuery):
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton(
+        f"🪖 Сквадные ({count_by_role('сквадной')})",
+        callback_data="role_сквадной"
+    ))
+    keyboard.add(InlineKeyboardButton(
+        f"🎯 Пехи ({count_by_role('пех')})",
+        callback_data="role_пех"
+    ))
+    keyboard.add(InlineKeyboardButton(
+        f"🔧 Техи ({count_by_role('тех')})",
+        callback_data="role_тех"
+    ))
+    keyboard.add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
+
+    await callback.message.edit_text("Выбери категорию:", reply_markup=keyboard)
+
+# =========================
+# 📊 СТАТИСТИКА
+# =========================
+
+@dp.callback_query_handler(lambda c: c.data == "stats")
+async def stats(callback: types.CallbackQuery):
+    top = get_top_week()
+
+    if not top:
+        text = "За 7 дней похвалы нет."
+    else:
+        text = "🏆 ТОП 5 за неделю:\n\n"
+        for i, (member, count) in enumerate(top, 1):
+            text += f"{i}. {member} — {count}\n"
+
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
+
+    await callback.message.edit_text(text, reply_markup=keyboard)
+
+# =========================
+# 📝 ЛОГИ
+# =========================
+
+@dp.callback_query_handler(lambda c: c.data == "logs")
+async def logs(callback: types.CallbackQuery):
+    logs_data = get_logs()[-10:]
+
+    text = "Последние 10 действий:\n\n"
+    for row in logs_data:
+        text += " | ".join(row) + "\n"
+
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton("🗑 Очистить логи", callback_data="clear_logs"))
+    keyboard.add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
+
+    await callback.message.edit_text(text, reply_markup=keyboard)
+
+@dp.callback_query_handler(lambda c: c.data == "clear_logs")
+async def clear_logs_handler(callback: types.CallbackQuery):
+    clear_logs()
+    await callback.message.edit_text(
+        "Логи очищены ✅",
+        reply_markup=main_menu()
+    )
 
 # =========================
 # 🚀 START
