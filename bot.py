@@ -119,7 +119,7 @@ def get_top_week():
     return sorted(counter.items(), key=lambda x: x[1], reverse=True)[:5]
 
 
-# ---------- ЖАЛОБЫ (ОБНОВЛЕННЫЕ) ----------
+# ---------- ЖАЛОБЫ ----------
 
 def add_complaint(from_user, from_user_id, to_member, reason):
     """Добавляем жалобу, сохраняя ID отправителя для связи"""
@@ -148,7 +148,6 @@ def close_complaint(index):
 def add_proof_to_complaint(index, proof_text):
     """Добавляет доказательства к жалобе"""
     ws = sheet.worksheet("жалобы")
-    # Получаем текущие доки и добавляем новые
     current = ws.cell(index + 2, 7).value or ""
     new_proof = f"{current}\n{proof_text}" if current else proof_text
     ws.update_cell(index + 2, 7, new_proof)
@@ -186,7 +185,7 @@ def main_menu(user_id):
 
 class ActionState(StatesGroup):
     waiting_reason = State()
-    waiting_proof = State()  # Для приема доказательств
+    waiting_proof = State()
 
 
 # =========================
@@ -207,7 +206,7 @@ async def back_menu(callback: types.CallbackQuery):
 
 
 # =========================
-# ❌ CANCEL (ИСПРАВЛЕНО)
+# ❌ CANCEL
 # =========================
 
 @dp.message_handler(state='*', commands=['cancel'])
@@ -295,7 +294,6 @@ async def process_reason(message: types.Message, state: FSMContext):
         await message.answer("👏 Похвала записана ✅", reply_markup=main_menu(user_id))
 
     elif action == "complaint":
-        # Передаем user_id для возможности ответа
         add_complaint(username, user_id, member, message.text)
         append_log("ЖАЛОБА", username, user_id, member)
         await message.answer("⚖ Жалоба отправлена. Ожидайте рассмотрения ✅", reply_markup=main_menu(user_id))
@@ -304,7 +302,7 @@ async def process_reason(message: types.Message, state: FSMContext):
 
 
 # =========================
-# 📸 ПРИЕМ ДОКАЗАТЕЛЬСТВ (НОВОЕ)
+# 📸 ПРИЕМ ДОКАЗАТЕЛЬСТВ
 # =========================
 
 @dp.message_handler(state=ActionState.waiting_proof, content_types=types.ContentTypes.ANY)
@@ -316,7 +314,6 @@ async def process_proof(message: types.Message, state: FSMContext):
         await state.finish()
         return
 
-    # Сохраняем доказательство
     proof_info = ""
     if message.photo:
         proof_info = f"📷 Фото: {message.photo[-1].file_id}"
@@ -331,7 +328,18 @@ async def process_proof(message: types.Message, state: FSMContext):
 
     add_proof_to_complaint(complaint_index, proof_info)
 
-    # Уведомляем админов (можно расширить)
+    # Уведомляем админа, который запросил доки
+    admin_id = data.get("admin_id")
+    if admin_id:
+        try:
+            await bot.send_message(
+                admin_id,
+                f"📬 Заявитель прислал доказательства по жалобе #{complaint_index}\n"
+                f"{proof_info}"
+            )
+        except:
+            pass
+
     await message.answer("✅ Доказательства приняты и прикреплены к жалобе")
     await state.finish()
 
@@ -468,7 +476,7 @@ async def clear_logs_handler(callback: types.CallbackQuery):
 
 
 # =========================
-# ⚖ ЖАЛОБЫ (ПОЛНОСТЬЮ ПЕРЕРАБОТАНО)
+# ⚖ ЖАЛОБЫ
 # =========================
 
 @dp.callback_query_handler(lambda c: c.data == "complaints")
@@ -480,14 +488,13 @@ async def complaints_menu(callback: types.CallbackQuery):
     rows = get_complaints()
     keyboard = InlineKeyboardMarkup()
 
-    # Пропускаем заголовок, обрабатываем только активные жалобы
     active_found = False
     for i, row in enumerate(rows[1:]):
         if len(row) < 6:
             continue
         status = row[5]
         if status != "активна":
-            continue  # Показываем только активные
+            continue
 
         active_found = True
         target = row[2] if len(row) > 2 else "Неизвестно"
@@ -507,135 +514,122 @@ async def complaints_menu(callback: types.CallbackQuery):
 async def complaint_actions(callback: types.CallbackQuery):
     data = callback.data.split("_")
 
-    # === ОБРАБОТКА КНОПОК ДЕЙСТВИЙ ===
-
-    # 1. Выдать ПРЕД и закрыть
-    if data[1] == "pred":
+    # === 1. ВЫДАТЬ ПРЕД И ЗАКРЫТЬ (complaint_pred_0) ===
+    if data[1] == "pred" and len(data) >= 3:
         try:
             index = int(data[2])
         except (IndexError, ValueError):
-            return await callback.answer("❌ Ошибка", show_alert=True)
+            return await callback.answer("❌ Ошибка индекса", show_alert=True)
 
         rows = get_complaints()
         if index + 1 >= len(rows):
             return await callback.answer("❌ Жалоба не найдена", show_alert=True)
 
-        row = rows[index + 1]  # +1 из-за заголовка
+        row = rows[index + 1]
         violator = row[2] if len(row) > 2 else "Неизвестно"
         reason = row[3] if len(row) > 3 else "Без указания"
         sender_id = row[1] if len(row) > 1 else None
 
-        # Выдаем пред
         append_pred(violator, f"По жалобе: {reason}")
         append_log("ПРЕД_ИЗ_ЖАЛОБЫ", callback.from_user.full_name, callback.from_user.id, violator)
-
-        # Закрываем жалобу
-        close_complaint(index)
-
-        # Уведомляем отправителя
-        if sender_id:
-            try:
-                await bot.send_message(
-                    int(sender_id),
-                    f"✅ Ваша жалоба на <b>{violator}</b> рассмотрена.\n"
-                    f"Нарушителю выдан <b>ПРЕД</b>.\n"
-                    f"Причина: <i>{reason}</i>",
-                    parse_mode="HTML"
-                )
-            except Exception as e:
-                logging.warning(f"Не удалось уведомить заявителя: {e}")
-
-        await callback.message.edit_text(
-            f"⚠ ПРЕД выдан пользователю <b>{violator}</b>.\nЖалоба закрыта ✅",
-            reply_markup=main_menu(callback.from_user.id),
-            parse_mode="HTML"
-        )
-        return
-
-    # 2. Запросить доказательства
-    if data[1] == "request_proof":
-        try:
-            index = int(data[2])
-        except (IndexError, ValueError):
-            return await callback.answer("❌ Ошибка", show_alert=True)
-
-        rows = get_complaints()
-        if index + 1 >= len(rows):
-            return await callback.answer("❌ Жалоба не найдена", show_alert=True)
-
-        row = rows[index + 1]
-        sender_id = row[1] if len(row) > 1 else None
-        target = row[2] if len(row) > 2 else "неизвестно"
-
-        if sender_id:
-            try:
-                # Сохраняем индекс в состоянии для приема файлов
-                await ActionState.waiting_proof.set()
-                await dp.storage.set_state(chat=sender_id, user=sender_id, state=ActionState.waiting_proof)
-                await dp.storage.set_data(chat=sender_id, user=sender_id, data={"complaint_index": index})
-
-                await bot.send_message(
-                    int(sender_id),
-                    f"🔍 Администратор запросил доказательства по жалобе на <b>{target}</b>.\n\n"
-                    f"📎 Пожалуйста, отправьте скриншоты, видео или описание в следующем сообщении.\n"
-                    f"Используйте /cancel для отмены.",
-                    parse_mode="HTML"
-                )
-                await callback.answer("📩 Запрос на доказательства отправлен заявителю", show_alert=True)
-            except Exception as e:
-                await callback.answer(f"❌ Не удалось отправить запрос: {e}", show_alert=True)
-        else:
-            await callback.answer("❌ Не найден ID заявителя", show_alert=True)
-        return
-
-    # 3. Просто закрыть без действий
-    if data[1] == "close_noaction":
-        try:
-            index = int(data[2])
-        except (IndexError, ValueError):
-            return await callback.answer("❌ Ошибка", show_alert=True)
-
-        rows = get_complaints()
-        if index + 1 >= len(rows):
-            return await callback.answer("❌ Жалоба не найдена", show_alert=True)
-
-        row = rows[index + 1]
-        sender_id = row[1] if len(row) > 1 else None
-        target = row[2] if len(row) > 2 else "неизвестно"
-
         close_complaint(index)
 
         if sender_id:
             try:
                 await bot.send_message(
                     int(sender_id),
-                    f"ℹ️ Ваша жалоба на <b>{target}</b> рассмотрена.\n"
-                    f"Решение: закрыто без применения санкций.",
+                    f"✅ Ваша жалоба на <b>{violator}</b> рассмотрена.\nНарушителю выдан <b>ПРЕД</b>.",
                     parse_mode="HTML"
                 )
             except:
                 pass
 
         await callback.message.edit_text(
-            f"✅ Жалоба на <b>{target}</b> закрыта (без действий)",
-            reply_markup=main_menu(callback.from_user.id),
-            parse_mode="HTML"
+            f"⚠ ПРЕД выдан пользователю {violator}. Жалоба закрыта ✅",
+            reply_markup=main_menu(callback.from_user.id)
         )
         return
 
-    # === ПРОСМОТР ЖАЛОБЫ ===
+    # === 2. ЗАПРОСИТЬ ДОКАЗАТЕЛЬСТВА (complaint_request_proof_0) ===
+    if data[1] == "request" and data[2] == "proof" and len(data) >= 4:
+        try:
+            index = int(data[3])
+        except (IndexError, ValueError):
+            return await callback.answer("❌ Ошибка индекса", show_alert=True)
+
+        rows = get_complaints()
+        if index + 1 >= len(rows):
+            return await callback.answer("❌ Жалоба не найдена", show_alert=True)
+
+        row = rows[index + 1]
+        sender_id = row[1] if len(row) > 1 else None
+        target = row[2] if len(row) > 2 else "неизвестно"
+
+        if sender_id:
+            try:
+                await dp.storage.set_state(chat=int(sender_id), user=int(sender_id), state=ActionState.waiting_proof)
+                await dp.storage.set_data(chat=int(sender_id), user=int(sender_id),
+                                          data={"complaint_index": index, "admin_id": callback.from_user.id})
+
+                await bot.send_message(
+                    int(sender_id),
+                    f"🔍 Администратор запросил доказательства по жалобе на <b>{target}</b>.\n\n"
+                    f"📎 Пожалуйста, отправьте скриншоты или видео в следующем сообщении.\n"
+                    f"Используйте /cancel для отмены.",
+                    parse_mode="HTML"
+                )
+                await callback.answer("📩 Запрос отправлен заявителю", show_alert=True)
+            except Exception as e:
+                await callback.answer(f"❌ Ошибка отправки: {e}", show_alert=True)
+        else:
+            await callback.answer("❌ Не найден ID заявителя", show_alert=True)
+        return
+
+    # === 3. ЗАКРЫТЬ БЕЗ ДЕЙСТВИЙ (complaint_close_noaction_0) ===
+    if data[1] == "close" and data[2] == "noaction" and len(data) >= 4:
+        try:
+            index = int(data[3])
+        except (IndexError, ValueError):
+            return await callback.answer("❌ Ошибка индекса", show_alert=True)
+
+        rows = get_complaints()
+        if index + 1 >= len(rows):
+            return await callback.answer("❌ Жалоба не найдена", show_alert=True)
+
+        row = rows[index + 1]
+        sender_id = row[1] if len(row) > 1 else None
+        target = row[2] if len(row) > 2 else "неизвестно"
+
+        close_complaint(index)
+
+        if sender_id:
+            try:
+                await bot.send_message(
+                    int(sender_id),
+                    f"ℹ️ Ваша жалоба рассмотрена и закрыта без санкций.",
+                    parse_mode="HTML"
+                )
+            except:
+                pass
+
+        await callback.message.edit_text(
+            f"✅ Жалоба закрыта (без действий)",
+            reply_markup=main_menu(callback.from_user.id)
+        )
+        return
+
+    # === 4. ПРОСМОТР ЖАЛОБЫ (complaint_0) ===
     try:
         index = int(data[1])
     except (IndexError, ValueError):
-        return await callback.answer("❌", show_alert=True)
+        return await callback.answer("❌ Неверный формат жалобы", show_alert=True)
 
     rows = get_complaints()
     if index + 1 >= len(rows):
         return await callback.answer("❌ Жалоба не найдена", show_alert=True)
 
-    row = rows[index + 1]  # Сдвиг на заголовок
+    row = rows[index + 1]
 
-    # Безопасное извлечение данных
     from_user = row[0] if len(row) > 0 else "?"
     to_member = row[2] if len(row) > 2 else "?"
     reason = row[3] if len(row) > 3 else "Нет описания"
@@ -654,7 +648,6 @@ async def complaint_actions(callback: types.CallbackQuery):
     )
 
     keyboard = InlineKeyboardMarkup(row_width=1)
-    # Кнопки действий для админа
     keyboard.add(InlineKeyboardButton("⚠ Выдать ПРЕД и закрыть", callback_data=f"complaint_pred_{index}"))
     keyboard.add(InlineKeyboardButton("📸 Запросить доказательства", callback_data=f"complaint_request_proof_{index}"))
     keyboard.add(InlineKeyboardButton("❌ Закрыть (без действий)", callback_data=f"complaint_close_noaction_{index}"))
