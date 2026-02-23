@@ -41,6 +41,26 @@ def get_clan_members():
     return [v for v in ws.col_values(1) if v.strip()]
 
 
+# ---------- ИНФОРМАЦИЯ ОБ УЧАСТНИКЕ ----------
+def get_member_info(nickname):
+    """Получает полную информацию об участнике из листа 'участники клана'"""
+    ws = sheet.worksheet("участники клана")
+    rows = ws.get_all_values()
+
+    for row in rows[1:]:  # Пропускаем заголовок
+        if len(row) >= 1 and row[0].strip() == nickname.strip():
+            return {
+                'nick': row[0] if len(row) > 0 else 'N/A',
+                'steam_id': row[1] if len(row) > 1 else 'N/A',
+                'role': row[2] if len(row) > 2 else 'N/A',
+                'warns': row[3] if len(row) > 3 else '0',
+                'praises': row[4] if len(row) > 4 else '0',
+                'score': row[5] if len(row) > 5 else '0',
+                'desirable': row[6] if len(row) > 6 else 'N/A'
+            }
+    return None
+
+
 # ---------- ПРЕД ----------
 def append_pred(member, reason):
     ws = sheet.worksheet("преды")
@@ -122,10 +142,8 @@ def get_top_week():
 # ---------- ЖАЛОБЫ ----------
 
 def add_complaint(from_user, from_user_id, to_member, reason):
-    """Добавляем жалобу, сохраняя ID отправителя для связи"""
     ws = sheet.worksheet("жалобы")
     date = datetime.now().strftime("%d.%m.%Y %H:%M")
-    # Структура: [От_кого, ID_отправителя, На_кого, Причина, Дата, Статус, Доказательства]
     ws.append_row([from_user, str(from_user_id), to_member, reason, date, "активна", ""])
 
 
@@ -135,18 +153,15 @@ def get_complaints():
 
 
 def update_complaint_field(index, column, value):
-    """Обновляет конкретное поле жалобы (column - номер колонки 1-based)"""
     ws = sheet.worksheet("жалобы")
     ws.update_cell(index + 2, column, value)
 
 
 def close_complaint(index):
-    """Закрывает жалобу по индексу (индекс в списке без заголовка)"""
     update_complaint_field(index, 6, "закрыта")
 
 
 def add_proof_to_complaint(index, proof_text):
-    """Добавляет доказательства к жалобе"""
     ws = sheet.worksheet("жалобы")
     current = ws.cell(index + 2, 7).value or ""
     new_proof = f"{current}\n{proof_text}" if current else proof_text
@@ -233,26 +248,55 @@ async def clan_list(callback: types.CallbackQuery):
 
     keyboard.add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
 
-    await callback.message.edit_text("Выбери участника:", reply_markup=keyboard)
+    await callback.message.edit_text("📋 Выберите участника:", reply_markup=keyboard)
 
 
 @dp.callback_query_handler(lambda c: c.data.startswith("member_"))
 async def member_selected(callback: types.CallbackQuery, state: FSMContext):
-    member = callback.data.replace("member_", "")
+    member = callback.data.replace("member_", "", 1)
     await state.update_data(member=member)
+
+    # Проверяем, админ ли пользователь
+    is_admin = callback.from_user.id in ADMINS
+
+    # Получаем информацию об участнике (для админов)
+    member_info = None
+    if is_admin:
+        member_info = get_member_info(member)
 
     keyboard = InlineKeyboardMarkup()
 
-    if callback.from_user.id in ADMINS:
+    if is_admin:
         keyboard.add(InlineKeyboardButton("⚠ Пред", callback_data="action_pred"))
+
+        # Формируем красивое сообщение с данными из таблицы
+        if member_info:
+            # Определяем цвет статуса
+            status_emoji = "✅" if member_info['desirable'] == "желателен" else "❌"
+
+            text = (
+                f"👤 <b>Карточка участника: {member_info['nick']}</b>\n\n"
+                f"🎮 <b>Steam ID:</b> <code>{member_info['steam_id']}</code>\n"
+                f"🎖 <b>Роль:</b> {member_info['role']}\n"
+                f"⚠️ <b>Предупреждения:</b> {member_info['warns']}\n"
+                f"👏 <b>Похвалы:</b> {member_info['praises']}\n"
+                f"📊 <b>Рейтинг:</b> {member_info['score']}\n"
+                f"📌 <b>Статус:</b> {status_emoji} {member_info['desirable']}\n\n"
+                f"<i>Выберите действие:</i>"
+            )
+        else:
+            text = f"⚠️ <b>Участник {member}</b>\n\nИнформация в таблице не найдена.\n\n<i>Выберите действие:</i>"
+    else:
+        text = f"👤 <b>Участник:</b> {member}\n\n<i>Выберите действие:</i>"
 
     keyboard.add(InlineKeyboardButton("👏 Похвала", callback_data="action_praise"))
     keyboard.add(InlineKeyboardButton("⚖ Жалоба", callback_data="action_complaint"))
     keyboard.add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
 
     await callback.message.edit_text(
-        f"Выбран: {member}\n\nВыбери действие:",
-        reply_markup=keyboard
+        text,
+        reply_markup=keyboard,
+        parse_mode="HTML"
     )
 
 
@@ -328,7 +372,6 @@ async def process_proof(message: types.Message, state: FSMContext):
 
     add_proof_to_complaint(complaint_index, proof_info)
 
-    # Уведомляем админа, который запросил доки
     admin_id = data.get("admin_id")
     if admin_id:
         try:
