@@ -388,10 +388,17 @@ async def logs(callback: types.CallbackQuery):
     if len(logs_data) <= 1:
         text = "📭 Логи пусты"
     else:
-        text = "🕒 Последние 10 действий:\n\n" + "\n".join(
-            f"`{row[4]}` | {row[0]} | {row[1]} → {row[3]}"
-            for row in logs_data[-1:0:-1] if len(row) >= 5
-        )
+        # Экранируем специальные символы Markdown
+        text = "🕒 Последние 10 действий:\n\n"
+        for row in logs_data[-1:0:-1]:
+            if len(row) >= 5:
+                # Экранируем подчёркивания и другие спецсимволы
+                action = row[0].replace("_", "\\_").replace("*", "\\*").replace("`", "\\`")
+                username = row[1].replace("_", "\\_").replace("*", "\\*").replace("`", "\\`")
+                target = row[3].replace("_", "\\_").replace("*", "\\*").replace("`", "\\`")
+                date = row[4].replace("_", "\\_").replace("*", "\\*").replace("`", "\\`")
+
+                text += f"`{date}` | {action} | {username} → {target}\n"
 
     keyboard = InlineKeyboardMarkup()
     keyboard.add(InlineKeyboardButton("🗑 Очистить логи", callback_data="clear_logs"))
