@@ -380,26 +380,23 @@ async def stats(callback: types.CallbackQuery):
 @dp.callback_query_handler(lambda c: c.data == "logs")
 async def logs(callback: types.CallbackQuery):
     if callback.from_user.id not in ADMINS:
-        await callback.answer("❌ Только для админов", show_alert=True)
+        await callback.answer("❌ Доступ только для админов", show_alert=True)
         return
-    logs_data = get_logs()
-    logs_data = logs_data[1:] if len(logs_data) > 1 else []
-    logs_data = logs_data[-10:]
-    if not logs_
+
+    logs_data = get_logs()[-10:]
+
+    if len(logs_data) <= 1:
         text = "📭 Логи пусты"
     else:
-        lines = []
-        for row in reversed(logs_data):
-            if len(row) >= 5:
-                action = row[0].replace("_", "\\_").replace("*", "\\*").replace("`", "\\`")
-                username = row[1].replace("_", "\\_").replace("*", "\\*")
-                target = row[3].replace("_", "\\_").replace("*", "\\*")
-                date = row[4]
-                lines.append(f"📅 `{date}` | {action} | {username} → {target}")
-        text = "🕒 Последние 10 действий:\n\n" + "\n".join(lines)
+        text = "🕒 Последние 10 действий:\n\n" + "\n".join(
+            f"`{row[4]}` | {row[0]} | {row[1]} → {row[3]}"
+            for row in logs_data[-1:0:-1] if len(row) >= 5
+        )
+
     keyboard = InlineKeyboardMarkup()
     keyboard.add(InlineKeyboardButton("🗑 Очистить логи", callback_data="clear_logs"))
     keyboard.add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
+
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
 
 @dp.callback_query_handler(lambda c: c.data == "clear_logs")
