@@ -31,6 +31,7 @@ creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_data, scope)
 client = gspread.authorize(creds)
 sheet = client.open_by_key(SPREADSHEET_KEY)
 
+
 # =========================
 # 📊 Google Sheets
 # =========================
@@ -38,6 +39,7 @@ sheet = client.open_by_key(SPREADSHEET_KEY)
 def get_clan_members():
     ws = sheet.worksheet("участники клана")
     return [v for v in ws.col_values(1) if v.strip()]
+
 
 # ---------- ИНФОРМАЦИЯ ОБ УЧАСТНИКЕ ----------
 def get_member_info(nickname):
@@ -56,11 +58,13 @@ def get_member_info(nickname):
             }
     return None
 
+
 # ---------- ПРЕД ----------
 def append_pred(member, reason):
     ws = sheet.worksheet("преды")
     date = datetime.now().strftime("%d.%m.%Y")
     ws.append_row([member, reason, date])
+
 
 # ---------- ПОХВАЛА ----------
 def append_praise(member, from_user, reason):
@@ -68,33 +72,41 @@ def append_praise(member, from_user, reason):
     date = datetime.now().strftime("%d.%m.%Y")
     ws.append_row([member, from_user, reason, date])
 
+
 # ---------- ЛОГИ ----------
 def append_log(action, username, user_id, to_member):
     ws = sheet.worksheet("логи")
     date = datetime.now().strftime("%d.%m.%Y %H:%M")
     ws.append_row([action, username, user_id, to_member, date])
 
+
 def get_logs():
     ws = sheet.worksheet("логи")
     return ws.get_all_values()
+
 
 def clear_logs():
     ws = sheet.worksheet("логи")
     ws.clear()
     ws.append_row(["Тип", "Username", "UserID", "Кому", "Дата"])
 
+
 # ---------- РАЗРЯДЫ ----------
 def get_roles_sheet():
     return sheet.worksheet("разряды")
 
+
 def get_roles_data():
     return get_roles_sheet().get_all_values()[1:]
+
 
 def get_members_by_role(role):
     return [r[0] for r in get_roles_data() if r[1].lower() == role]
 
+
 def count_by_role(role):
     return len(get_members_by_role(role))
+
 
 def update_role(member, new_role):
     ws = get_roles_sheet()
@@ -104,40 +116,60 @@ def update_role(member, new_role):
             ws.update_cell(idx + 1, 2, new_role)
             break
 
+
 # ---------- СТАТИСТИКА ----------
-def get_top_week():
+def get_top_praises(weeks=None):
+    """
+    Получает ТОП похвал.
+    weeks=None — за всё время, weeks=1 — за неделю, weeks=4 — за месяц
+    """
     ws = sheet.worksheet("Похвала")
-    rows = ws.get_all_values()[1:]
-    week_ago = datetime.now() - timedelta(days=7)
+    rows = ws.get_all_values()[1:]  # без заголовка
     counter = {}
+
     for row in rows:
         try:
-            date = datetime.strptime(row[3], "%d.%m.%Y")
-            if date >= week_ago:
-                member = row[0]
-                counter[member] = counter.get(member, 0) + 1
-        except:
-            continue
-    return sorted(counter.items(), key=lambda x: x[1], reverse=True)[:5]
+            # Пропускаем пустые строки
+            if len(row) < 4 or not row[0].strip():
+                continue
 
-# ---------- ЖАЛОБЫ (С РАСШИРЕННЫМ ЛОГИРОВАНИЕМ) ----------
+            member = row[0].strip()
+
+            # Если указан период — фильтруем по дате
+            if weeks is not None:
+                date_str = row[3].strip() if len(row) > 3 and row[3].strip() else None
+                if not date_str:
+                    continue
+                date = datetime.strptime(date_str, "%d.%m.%Y")
+                if date < datetime.now() - timedelta(weeks=weeks):
+                    continue
+
+            counter[member] = counter.get(member, 0) + 1
+        except Exception:
+            continue
+
+    return sorted(counter.items(), key=lambda x: x[1], reverse=True)[:10]
+
+
+# ---------- ЖАЛОБЫ ----------
 
 def add_complaint(from_user, from_user_id, to_member, reason):
     ws = sheet.worksheet("жалобы")
     date = datetime.now().strftime("%d.%m.%Y %H:%M")
-    # [От кого, ID, На кого, Причина, Дата, Статус, Доки, Закрыл]
     ws.append_row([from_user, str(from_user_id), to_member, reason, date, "активна", "", ""])
+
 
 def get_complaints():
     ws = sheet.worksheet("жалобы")
     return ws.get_all_values()
 
+
 def update_complaint_field(index, column, value):
     ws = sheet.worksheet("жалобы")
     ws.update_cell(index + 2, column, value)
 
+
 def close_complaint(index, closed_by=None):
-    """Закрывает жалобу + записывает кто закрыл в 8-ю колонку"""
     update_complaint_field(index, 6, "закрыта")
     if closed_by:
         try:
@@ -147,11 +179,13 @@ def close_complaint(index, closed_by=None):
         except:
             pass
 
+
 def add_proof_to_complaint(index, proof_text):
     ws = sheet.worksheet("жалобы")
     current = ws.cell(index + 2, 7).value or ""
     new_proof = f"{current}\n{proof_text}" if current else proof_text
     ws.update_cell(index + 2, 7, new_proof)
+
 
 # =========================
 # 🤖 INIT
@@ -160,6 +194,7 @@ def add_proof_to_complaint(index, proof_text):
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TOKEN)
 dp = Dispatcher(bot, storage=MemoryStorage())
+
 
 # =========================
 # MENU
@@ -175,6 +210,7 @@ def main_menu(user_id):
         keyboard.add(InlineKeyboardButton("📝 Логи", callback_data="logs"))
     return keyboard
 
+
 # =========================
 # FSM
 # =========================
@@ -182,6 +218,7 @@ def main_menu(user_id):
 class ActionState(StatesGroup):
     waiting_reason = State()
     waiting_proof = State()
+
 
 # =========================
 # START / CANCEL / BACK
@@ -191,9 +228,11 @@ class ActionState(StatesGroup):
 async def start(message: types.Message):
     await message.answer("Главное меню:", reply_markup=main_menu(message.from_user.id))
 
+
 @dp.callback_query_handler(lambda c: c.data == "back_menu")
 async def back_menu(callback: types.CallbackQuery):
     await callback.message.edit_text("Главное меню:", reply_markup=main_menu(callback.from_user.id))
+
 
 @dp.message_handler(state='*', commands=['cancel'])
 async def cancel_handler(message: types.Message, state: FSMContext):
@@ -201,6 +240,7 @@ async def cancel_handler(message: types.Message, state: FSMContext):
         return
     await state.finish()
     await message.answer("✅ Действие отменено", reply_markup=main_menu(message.from_user.id))
+
 
 # =========================
 # 📋 КЛАН
@@ -214,6 +254,7 @@ async def clan_list(callback: types.CallbackQuery):
         keyboard.insert(InlineKeyboardButton(m, callback_data=f"member_{m}"))
     keyboard.add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
     await callback.message.edit_text("📋 Выберите участника:", reply_markup=keyboard)
+
 
 @dp.callback_query_handler(lambda c: c.data.startswith("member_"))
 async def member_selected(callback: types.CallbackQuery, state: FSMContext):
@@ -247,6 +288,7 @@ async def member_selected(callback: types.CallbackQuery, state: FSMContext):
     keyboard.add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
 
+
 @dp.callback_query_handler(lambda c: c.data.startswith("action_"))
 async def action_selected(callback: types.CallbackQuery, state: FSMContext):
     action = callback.data.replace("action_", "")
@@ -254,6 +296,7 @@ async def action_selected(callback: types.CallbackQuery, state: FSMContext):
     await ActionState.waiting_reason.set()
     msg = "📝 Опиши суть жалобы (или /cancel):" if action == "complaint" else "📝 Напиши причину (или /cancel):"
     await callback.message.answer(msg)
+
 
 @dp.message_handler(state=ActionState.waiting_reason)
 async def process_reason(message: types.Message, state: FSMContext):
@@ -280,6 +323,7 @@ async def process_reason(message: types.Message, state: FSMContext):
         append_log("ЖАЛОБА", username, user_id, member)
         await message.answer("⚖ Жалоба отправлена ✅", reply_markup=main_menu(user_id))
     await state.finish()
+
 
 # =========================
 # 📸 ПРИЕМ ДОКАЗАТЕЛЬСТВ
@@ -313,6 +357,7 @@ async def process_proof(message: types.Message, state: FSMContext):
     await message.answer("✅ Доказательства приняты")
     await state.finish()
 
+
 # =========================
 # 🎖 РАЗРЯДЫ
 # =========================
@@ -326,6 +371,7 @@ async def roles_menu(callback: types.CallbackQuery):
     keyboard.add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
     await callback.message.edit_text("Выбери категорию:", reply_markup=keyboard)
 
+
 @dp.callback_query_handler(lambda c: c.data.startswith("role_"))
 async def show_role_members(callback: types.CallbackQuery):
     role = callback.data.replace("role_", "")
@@ -335,6 +381,7 @@ async def show_role_members(callback: types.CallbackQuery):
         keyboard.insert(InlineKeyboardButton(m, callback_data=f"editrole_{m}"))
     keyboard.add(InlineKeyboardButton("⬅ Назад", callback_data="roles_menu"))
     await callback.message.edit_text(f"{role.upper()} ({len(members)}):", reply_markup=keyboard)
+
 
 @dp.callback_query_handler(lambda c: c.data.startswith("editrole_"))
 async def edit_role(callback: types.CallbackQuery, state: FSMContext):
@@ -349,29 +396,59 @@ async def edit_role(callback: types.CallbackQuery, state: FSMContext):
     keyboard.add(InlineKeyboardButton("⬅ Назад", callback_data="roles_menu"))
     await callback.message.edit_text(f"Переназначить роль для {member}:", reply_markup=keyboard)
 
+
 @dp.callback_query_handler(lambda c: c.data.startswith("setrole_"))
 async def set_new_role(callback: types.CallbackQuery, state: FSMContext):
     new_role = callback.data.replace("setrole_", "")
     member = (await state.get_data()).get("role_member")
     if member:
         update_role(member, new_role)
-        await callback.message.edit_text(f"✅ Роль для {member} обновлена на {new_role}", reply_markup=main_menu(callback.from_user.id))
+        await callback.message.edit_text(f"✅ Роль для {member} обновлена на {new_role}",
+                                         reply_markup=main_menu(callback.from_user.id))
     else:
         await callback.message.edit_text("❌ Ошибка: участник не найден")
 
+
 # =========================
-# 📊 СТАТИСТИКА
+# 📊 СТАТИСТИКА (ОБНОВЛЕНО)
 # =========================
 
 @dp.callback_query_handler(lambda c: c.data == "stats")
 async def stats(callback: types.CallbackQuery):
-    top = get_top_week()
-    text = "📭 За 7 дней похвал ещё нет." if not top else (
-        "🏆 ТОП-5 за неделю:\n\n" + "\n".join(f"{i}. {m} — {c} 👏" for i, (m, c) in enumerate(top, 1))
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(
+        InlineKeyboardButton("📅 За неделю", callback_data="stats_week"),
+        InlineKeyboardButton("📈 За всё время", callback_data="stats_all")
+    )
+    keyboard.add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
+    await callback.message.edit_text("📊 Выберите период для статистики:", reply_markup=keyboard)
+
+
+@dp.callback_query_handler(lambda c: c.data == "stats_week")
+async def stats_week(callback: types.CallbackQuery):
+    top = get_top_praises(weeks=1)
+    text = "📭 За неделю похвал ещё нет." if not top else (
+            "🏆 <b>ТОП-10 за неделю:</b>\n\n" +
+            "\n".join(f"{i}. {m} — {c} 👏" for i, (m, c) in enumerate(top, 1))
     )
     keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton("🔙 Назад", callback_data="stats"))
     keyboard.add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
-    await callback.message.edit_text(text, reply_markup=keyboard)
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+
+
+@dp.callback_query_handler(lambda c: c.data == "stats_all")
+async def stats_all(callback: types.CallbackQuery):
+    top = get_top_praises(weeks=None)
+    text = "📭 Похвал ещё нет." if not top else (
+            "🏆 <b>ТОП-10 за всё время:</b>\n\n" +
+            "\n".join(f"{i}. {m} — {c} 👏" for i, (m, c) in enumerate(top, 1))
+    )
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton("🔙 Назад", callback_data="stats"))
+    keyboard.add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+
 
 # =========================
 # 📝 ЛОГИ
@@ -388,23 +465,20 @@ async def logs(callback: types.CallbackQuery):
     if len(logs_data) <= 1:
         text = "📭 Логи пусты"
     else:
-        # Экранируем специальные символы Markdown
         text = "🕒 Последние 10 действий:\n\n"
         for row in logs_data[-1:0:-1]:
             if len(row) >= 5:
-                # Экранируем подчёркивания и другие спецсимволы
                 action = row[0].replace("_", "\\_").replace("*", "\\*").replace("`", "\\`")
                 username = row[1].replace("_", "\\_").replace("*", "\\*").replace("`", "\\`")
                 target = row[3].replace("_", "\\_").replace("*", "\\*").replace("`", "\\`")
                 date = row[4].replace("_", "\\_").replace("*", "\\*").replace("`", "\\`")
-
                 text += f"`{date}` | {action} | {username} → {target}\n"
 
     keyboard = InlineKeyboardMarkup()
     keyboard.add(InlineKeyboardButton("🗑 Очистить логи", callback_data="clear_logs"))
     keyboard.add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
-
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
+
 
 @dp.callback_query_handler(lambda c: c.data == "clear_logs")
 async def clear_logs_handler(callback: types.CallbackQuery):
@@ -414,8 +488,9 @@ async def clear_logs_handler(callback: types.CallbackQuery):
     clear_logs()
     await callback.message.edit_text("✅ Логи очищены", reply_markup=main_menu(callback.from_user.id))
 
+
 # =========================
-# ⚖ ЖАЛОБЫ (С ЛОГИРОВАНИЕМ ДЕЙСТВИЙ)
+# ⚖ ЖАЛОБЫ
 # =========================
 
 @dp.callback_query_handler(lambda c: c.data == "complaints")
@@ -439,6 +514,7 @@ async def complaints_menu(callback: types.CallbackQuery):
     keyboard.add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
     await callback.message.edit_text("⚖ Активные жалобы:", reply_markup=keyboard)
 
+
 @dp.callback_query_handler(lambda c: c.data.startswith("complaint_"))
 async def complaint_actions(callback: types.CallbackQuery):
     data = callback.data.split("_")
@@ -461,16 +537,17 @@ async def complaint_actions(callback: types.CallbackQuery):
         sender_id = row[1] if len(row) > 1 else None
 
         append_pred(violator, f"По жалобе: {reason}")
-        # 🔥 Логируем с указанием АДМИНА
         append_log(f"ПРЕД_ПО_ЖАЛОБЕ [{admin_info}]", callback.from_user.full_name, callback.from_user.id, violator)
         close_complaint(index, closed_by=admin_info)
 
         if sender_id:
             try:
-                await bot.send_message(int(sender_id), f"✅ Жалоба на {violator} рассмотрена. Выдан ПРЕД.", parse_mode="HTML")
+                await bot.send_message(int(sender_id), f"✅ Жалоба на {violator} рассмотрена. Выдан ПРЕД.",
+                                       parse_mode="HTML")
             except:
                 pass
-        await callback.message.edit_text(f"⚠ ПРЕД выдан {violator}. Жалоба закрыта ✅", reply_markup=main_menu(callback.from_user.id))
+        await callback.message.edit_text(f"⚠ ПРЕД выдан {violator}. Жалоба закрыта ✅",
+                                         reply_markup=main_menu(callback.from_user.id))
         return
 
     # === 2. ЗАПРОС ДОКОВ ===
@@ -486,14 +563,17 @@ async def complaint_actions(callback: types.CallbackQuery):
         sender_id = row[1] if len(row) > 1 else None
         target = row[2] if len(row) > 2 else "неизвестно"
 
-        # 🔥 Логируем запрос доказательств
-        append_log(f"ЗАПРОС_ДОКОВ_ПО_ЖАЛОБЕ [{admin_info}]", callback.from_user.full_name, callback.from_user.id, target)
+        append_log(f"ЗАПРОС_ДОКОВ_ПО_ЖАЛОБЕ [{admin_info}]", callback.from_user.full_name, callback.from_user.id,
+                   target)
 
         if sender_id:
             try:
                 await dp.storage.set_state(chat=int(sender_id), user=int(sender_id), state=ActionState.waiting_proof)
-                await dp.storage.set_data(chat=int(sender_id), user=int(sender_id), data={"complaint_index": index, "admin_id": callback.from_user.id})
-                await bot.send_message(int(sender_id), f"🔍 Запрошены доказательства по жалобе на {target}.\nОтправьте скриншоты или /cancel", parse_mode="HTML")
+                await dp.storage.set_data(chat=int(sender_id), user=int(sender_id),
+                                          data={"complaint_index": index, "admin_id": callback.from_user.id})
+                await bot.send_message(int(sender_id),
+                                       f"🔍 Запрошены доказательства по жалобе на {target}.\nОтправьте скриншоты или /cancel",
+                                       parse_mode="HTML")
                 await callback.answer("📩 Запрос отправлен", show_alert=True)
             except Exception as e:
                 await callback.answer(f"❌ Ошибка: {e}", show_alert=True)
@@ -514,8 +594,8 @@ async def complaint_actions(callback: types.CallbackQuery):
         sender_id = row[1] if len(row) > 1 else None
         target = row[2] if len(row) > 2 else "неизвестно"
 
-        # 🔥 Логируем закрытие без санкций
-        append_log(f"ЖАЛОБА_ЗАКРЫТА_БЕЗ_ДЕЙСТВИЙ [{admin_info}]", callback.from_user.full_name, callback.from_user.id, target)
+        append_log(f"ЖАЛОБА_ЗАКРЫТА_БЕЗ_ДЕЙСТВИЙ [{admin_info}]", callback.from_user.full_name, callback.from_user.id,
+                   target)
         close_complaint(index, closed_by=admin_info)
 
         if sender_id:
@@ -558,6 +638,7 @@ async def complaint_actions(callback: types.CallbackQuery):
     keyboard.add(InlineKeyboardButton("❌ Закрыть (ничего)", callback_data=f"complaint_close_noaction_{index}"))
     keyboard.add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+
 
 # =========================
 # 🚀 START
