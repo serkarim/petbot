@@ -949,6 +949,20 @@ async def test_report_cmd(message: types.Message):
         )
 
     await message.answer("✅ Отчёт отправлен в группу!")
+##
+@dp.message_handler(commands=["getid"])
+async def get_chat_id(message: types.Message):
+    if message.from_user.id not in ADMINS:
+        return
+
+    chat_id = message.chat.id
+    thread_id = message.message_thread_id if hasattr(message, 'message_thread_id') else None
+
+    text = f"🆔 <b>ID чата:</b> <code>{chat_id}</code>"
+    if thread_id:
+        text += f"\n📑 <b>ID темы:</b> <code>{thread_id}</code>"
+
+    await message.answer(text, parse_mode="HTML")
 # =========================
 # ⏰ ПЛАНИРОВЩИК (ОБНОВЛЁННЫЙ)
 # =========================
