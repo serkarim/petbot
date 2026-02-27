@@ -2,6 +2,7 @@ import logging
 from datetime import datetime, timedelta
 import os
 import json
+import re
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -13,6 +14,12 @@ from aiogram.dispatcher.filters.state import State, StatesGroup
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
+# Для планировщика
+try:
+    from aiocron import crontab
+except ImportError:
+    crontab = None
+
 # =========================
 # 🔐 ENV
 # =========================
@@ -20,6 +27,8 @@ from oauth2client.service_account import ServiceAccountCredentials
 TOKEN = os.getenv("TOKEN")
 SPREADSHEET_KEY = os.getenv("SPREADSHEET_KEY")
 ADMINS = list(map(int, os.getenv("ADMINS", "").split(",")))
+REPORT_CHAT_ID = os.getenv("REPORT_CHAT_ID")  # ID группы/канала для отчётов
+REPORT_TOPIC_ID = os.getenv("REPORT_TOPIC_ID")  # ID темы (опционально)
 
 scope = [
     "https://spreadsheets.google.com/feeds",
@@ -119,23 +128,15 @@ def update_role(member, new_role):
 
 # ---------- СТАТИСТИКА ----------
 def get_top_praises(weeks=None):
-    """
-    Получает ТОП похвал.
-    weeks=None — за всё время, weeks=1 — за неделю, weeks=4 — за месяц
-    """
     ws = sheet.worksheet("Похвала")
-    rows = ws.get_all_values()[1:]  # без заголовка
+    rows = ws.get_all_values()[1:]
     counter = {}
 
     for row in rows:
         try:
-            # Пропускаем пустые строки
             if len(row) < 4 or not row[0].strip():
                 continue
-
             member = row[0].strip()
-
-            # Если указан период — фильтруем по дате
             if weeks is not None:
                 date_str = row[3].strip() if len(row) > 3 and row[3].strip() else None
                 if not date_str:
@@ -143,16 +144,113 @@ def get_top_praises(weeks=None):
                 date = datetime.strptime(date_str, "%d.%m.%Y")
                 if date < datetime.now() - timedelta(weeks=weeks):
                     continue
-
             counter[member] = counter.get(member, 0) + 1
         except Exception:
             continue
-
     return sorted(counter.items(), key=lambda x: x[1], reverse=True)[:10]
 
 
-# ---------- ЖАЛОБЫ ----------
+# ---------- ШАБЛОНЫ ОТЧЁТОВ ----------
+def get_templates_sheet():
+    try:
+        return sheet.worksheet("Шаблоны отчётов")
+    except:
+        # Создаём лист если нет
+        ws = sheet.add_worksheet("Шаблоны отчётов", rows=100, cols=4)
+        ws.append_row(["ID", "Название", "Текст шаблона", "Активен"])
+        ws.append_row(["1", "Стандарт", "🏆 Итоги недели!\n\n{top_list}\n\nТак держать! 💪", "да"])
+        return ws
 
+
+def get_report_templates():
+    ws = get_templates_sheet()
+    rows = ws.get_all_values()[1:]
+    return [
+        {"id": row[0], "name": row[1], "text": row[2], "active": row[3].lower() == "да"}
+        for row in rows if len(row) >= 4
+    ]
+
+
+def get_active_template():
+    templates = get_report_templates()
+    active = [t for t in templates if t["active"]]
+    return active[0] if active else None
+
+
+def update_template(template_id, field, value):
+    ws = get_templates_sheet()
+    rows = ws.get_all_values()
+    for idx, row in enumerate(rows[1:], start=2):
+        if row[0] == template_id:
+            col = {"name": 2, "text": 3, "active": 4}.get(field)
+            if col:
+                ws.update_cell(idx, col, value)
+            return True
+    return False
+
+
+def add_template(name, text):
+    ws = get_templates_sheet()
+    rows = ws.get_all_values()
+    new_id = str(max([int(r[0]) for r in rows[1:] if r[0].isdigit()], default=0) + 1)
+    ws.append_row([new_id, name, text, "нет"])
+    return new_id
+
+
+# ---------- ГЕНЕРАЦИЯ ОТЧЁТА ----------
+def generate_weekly_report():
+    top = get_top_praises(weeks=1)
+    template = get_active_template()
+
+    if not template:
+        return "❌ Не найден активный шаблон отчёта"
+
+    if not top:
+        top_text = "📭 На этой неделе похвал ещё нет. Давайте активнее! 🔥"
+    else:
+        top_text = "\n".join(
+            f"{i}. {m} — {c} 👏" for i, (m, c) in enumerate(top, 1)
+        )
+
+    # Подставляем данные в шаблон
+    report = template["text"].format(
+        top_list=top_text,
+        date=datetime.now().strftime("%d.%m.%Y"),
+        week_start=(datetime.now() - timedelta(days=7)).strftime("%d.%m.%Y")
+    )
+
+    return report
+
+
+# ---------- ОТПРАВКА ОТЧЁТА ----------
+async def send_weekly_report():
+    if not REPORT_CHAT_ID:
+        logging.warning("REPORT_CHAT_ID не задан — отчёт не отправлен")
+        return
+
+    report_text = generate_weekly_report()
+
+    try:
+        # Отправляем в указанную тему (если задана)
+        if REPORT_TOPIC_ID and REPORT_TOPIC_ID.isdigit():
+            await bot.send_message(
+                chat_id=REPORT_CHAT_ID,
+                text=report_text,
+                parse_mode="HTML",
+                message_thread_id=int(REPORT_TOPIC_ID)
+            )
+        else:
+            await bot.send_message(
+                chat_id=REPORT_CHAT_ID,
+                text=report_text,
+                parse_mode="HTML"
+            )
+        logging.info("✅ Еженедельный отчёт отправлен")
+    except Exception as e:
+        logging.error(f"❌ Ошибка отправки отчёта: {e}")
+
+
+# ---------- ЖАЛОБЫ ----------
 def add_complaint(from_user, from_user_id, to_member, reason):
     ws = sheet.worksheet("жалобы")
     date = datetime.now().strftime("%d.%m.%Y %H:%M")
@@ -208,6 +306,7 @@ def main_menu(user_id):
     if user_id in ADMINS:
         keyboard.add(InlineKeyboardButton("🎖 Разряды", callback_data="roles_menu"))
         keyboard.add(InlineKeyboardButton("📝 Логи", callback_data="logs"))
+        keyboard.add(InlineKeyboardButton("📄 Шаблоны отчётов", callback_data="templates_menu"))
     return keyboard
 
 
@@ -218,6 +317,9 @@ def main_menu(user_id):
 class ActionState(StatesGroup):
     waiting_reason = State()
     waiting_proof = State()
+    editing_template = State()
+    new_template_name = State()
+    new_template_text = State()
 
 
 # =========================
@@ -410,7 +512,7 @@ async def set_new_role(callback: types.CallbackQuery, state: FSMContext):
 
 
 # =========================
-# 📊 СТАТИСТИКА (ОБНОВЛЕНО)
+# 📊 СТАТИСТИКА
 # =========================
 
 @dp.callback_query_handler(lambda c: c.data == "stats")
@@ -448,6 +550,199 @@ async def stats_all(callback: types.CallbackQuery):
     keyboard.add(InlineKeyboardButton("🔙 Назад", callback_data="stats"))
     keyboard.add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+
+
+# =========================
+# 📄 ШАБЛОНЫ ОТЧЁТОВ (НОВОЕ)
+# =========================
+
+@dp.callback_query_handler(lambda c: c.data == "templates_menu")
+async def templates_menu(callback: types.CallbackQuery):
+    if callback.from_user.id not in ADMINS:
+        await callback.answer("❌ Только для админов", show_alert=True)
+        return
+
+    templates = get_report_templates()
+    keyboard = InlineKeyboardMarkup()
+
+    for t in templates:
+        status = "✅" if t["active"] else "⭕"
+        keyboard.add(InlineKeyboardButton(
+            f"{status} {t['name']}",
+            callback_data=f"tmpl_{t['id']}"
+        ))
+
+    keyboard.add(
+        InlineKeyboardButton("➕ Добавить шаблон", callback_data="tmpl_add"),
+        InlineKeyboardButton("🔄 Протестировать отчёт", callback_data="tmpl_test"),
+        InlineKeyboardButton("🏠 В меню", callback_data="back_menu")
+    )
+
+    await callback.message.edit_text(
+        "📄 <b>Шаблоны еженедельных отчётов</b>\n\n"
+        "Нажмите на шаблон для редактирования.\n"
+        "Зелёная галочка = активный шаблон.",
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
+
+@dp.callback_query_handler(lambda c: c.data.startswith("tmpl_"))
+async def template_actions(callback: types.CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in ADMINS:
+        await callback.answer("❌", show_alert=True)
+        return
+
+    action = callback.data.split("_")[1]
+
+    # Протестировать отчёт
+    if action == "test":
+        report = generate_weekly_report()
+        await callback.message.answer(
+            f"🧪 <b>Тест отчёта:</b>\n\n{report}",
+            parse_mode="HTML"
+        )
+        await callback.answer("✅ Отчёт сгенерирован", show_alert=True)
+        return
+
+    # Добавить новый шаблон
+    if action == "add":
+        await state.update_data(template_action="add")
+        await ActionState.new_template_name.set()
+        await callback.message.answer("📝 Введите название нового шаблона:")
+        return
+
+    # Редактирование существующего
+    try:
+        template_id = callback.data.split("_")[1]
+    except:
+        return
+
+    templates = get_report_templates()
+    template = next((t for t in templates if t["id"] == template_id), None)
+
+    if not template:
+        await callback.answer("❌ Шаблон не найден", show_alert=True)
+        return
+
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(
+        InlineKeyboardButton("✏️ Изменить текст", callback_data=f"tmpl_edit_text_{template_id}"),
+        InlineKeyboardButton("🔄 Сделать активным" if not template["active"] else "✅ Уже активен",
+                             callback_data=f"tmpl_activate_{template_id}"),
+        InlineKeyboardButton("🗑 Удалить", callback_data=f"tmpl_delete_{template_id}")
+    )
+    keyboard.add(InlineKeyboardButton("🔙 Назад", callback_data="templates_menu"))
+
+    preview = template["text"][:200] + "..." if len(template["text"]) > 200 else template["text"]
+
+    await callback.message.edit_text(
+        f"📄 <b>Шаблон: {template['name']}</b>\n\n"
+        f"📋 <i>Предпросмотр:</i>\n<code>{preview}</code>\n\n"
+        f"🔁 Статус: {'✅ Активен' if template['active'] else '⭕ Не активен'}",
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
+
+@dp.callback_query_handler(lambda c: c.data.startswith("tmpl_edit_text_"))
+async def edit_template_text(callback: types.CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in ADMINS:
+        await callback.answer("❌", show_alert=True)
+        return
+
+    template_id = callback.data.replace("tmpl_edit_text_", "")
+    await state.update_data(template_action="edit", template_id=template_id)
+    await ActionState.editing_template.set()
+
+    await callback.message.answer(
+        "✏️ Введите новый текст шаблона.\n\n"
+        "Доступные переменные:\n"
+        "<code>{top_list}</code> — список лидеров\n"
+        "<code>{date}</code> — текущая дата\n"
+        "<code>{week_start}</code> — дата начала недели\n\n"
+        "Пример:\n"
+        "<code>🏆 Итоги за {week_start}–{date}!\n\n{top_list}\n\nТак держать! 💪</code>",
+        parse_mode="HTML"
+    )
+
+
+@dp.message_handler(state=ActionState.editing_template)
+async def save_template_text(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    template_id = data.get("template_id")
+
+    if not template_id:
+        await message.answer("❌ Ошибка: не указан шаблон")
+        await state.finish()
+        return
+
+    new_text = message.text
+    update_template(template_id, "text", new_text)
+
+    await message.answer("✅ Текст шаблона обновлен!", reply_markup=main_menu(message.from_user.id))
+    await state.finish()
+
+
+@dp.message_handler(state=ActionState.new_template_name)
+async def save_template_name(message: types.Message, state: FSMContext):
+    await state.update_data(new_template_name=message.text)
+    await ActionState.new_template_text.set()
+    await message.answer("📝 Теперь введите текст шаблона (используйте {top_list}, {date}, {week_start}):")
+
+
+@dp.message_handler(state=ActionState.new_template_text)
+async def save_new_template(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    name = data.get("new_template_name")
+    text = message.text
+
+    if not name or not text:
+        await message.answer("❌ Ошибка сохранения")
+        await state.finish()
+        return
+
+    new_id = add_template(name, text)
+    await message.answer(f"✅ Шаблон '{name}' создан! ID: {new_id}", reply_markup=main_menu(message.from_user.id))
+    await state.finish()
+
+
+@dp.callback_query_handler(lambda c: c.data.startswith("tmpl_activate_"))
+async def activate_template(callback: types.CallbackQuery):
+    if callback.from_user.id not in ADMINS:
+        await callback.answer("❌", show_alert=True)
+        return
+
+    # Сначала деактивируем все
+    templates = get_report_templates()
+    for t in templates:
+        update_template(t["id"], "active", "нет")
+
+    # Активируем выбранный
+    template_id = callback.data.replace("tmpl_activate_", "")
+    update_template(template_id, "active", "да")
+
+    await callback.answer("✅ Шаблон активирован!", show_alert=True)
+    await templates_menu(callback)  # Обновляем меню
+
+
+@dp.callback_query_handler(lambda c: c.data.startswith("tmpl_delete_"))
+async def delete_template(callback: types.CallbackQuery):
+    if callback.from_user.id not in ADMINS:
+        await callback.answer("❌", show_alert=True)
+        return
+
+    template_id = callback.data.replace("tmpl_delete_", "")
+    ws = get_templates_sheet()
+    rows = ws.get_all_values()
+
+    for idx, row in enumerate(rows[1:], start=2):
+        if row[0] == template_id:
+            ws.delete_rows(idx, idx)
+            break
+
+    await callback.answer("🗑 Шаблон удалён", show_alert=True)
+    await templates_menu(callback)
 
 
 # =========================
@@ -522,7 +817,6 @@ async def complaint_actions(callback: types.CallbackQuery):
     admin_username = f"@{callback.from_user.username}" if callback.from_user.username else ""
     admin_info = f"{admin_name} {admin_username}".strip()
 
-    # === 1. ПРЕД + ЗАКРЫТЬ ===
     if data[1] == "pred" and len(data) >= 3:
         try:
             index = int(data[2])
@@ -550,7 +844,6 @@ async def complaint_actions(callback: types.CallbackQuery):
                                          reply_markup=main_menu(callback.from_user.id))
         return
 
-    # === 2. ЗАПРОС ДОКОВ ===
     if data[1] == "request" and data[2] == "proof" and len(data) >= 4:
         try:
             index = int(data[3])
@@ -581,7 +874,6 @@ async def complaint_actions(callback: types.CallbackQuery):
             await callback.answer("❌ Не найден ID", show_alert=True)
         return
 
-    # === 3. ЗАКРЫТЬ БЕЗ ДЕЙСТВИЙ ===
     if data[1] == "close" and data[2] == "noaction" and len(data) >= 4:
         try:
             index = int(data[3])
@@ -606,7 +898,6 @@ async def complaint_actions(callback: types.CallbackQuery):
         await callback.message.edit_text(f"✅ Жалоба закрыта", reply_markup=main_menu(callback.from_user.id))
         return
 
-    # === 4. ПРОСМОТР ===
     try:
         index = int(data[1])
     except:
@@ -641,8 +932,26 @@ async def complaint_actions(callback: types.CallbackQuery):
 
 
 # =========================
+# ⏰ ПЛАНИРОВЩИК (НОВОЕ)
+# =========================
+
+async def on_startup(_):
+    """Запускается при старте бота"""
+    if crontab and REPORT_CHAT_ID:
+        # Каждую субботу в 18:30 по Москве = 15:30 UTC
+        crontab(
+            "30 15 * * 6",  # мин час день месяц день_недели (6 = суббота)
+            timezone="Europe/Moscow",
+            func=send_weekly_report
+        )
+        logging.info("⏰ Планировщик отчётов запущен (суббота 18:30 МСК)")
+    elif not REPORT_CHAT_ID:
+        logging.warning("⚠️ REPORT_CHAT_ID не задан — авто-отчёты отключены")
+
+
+# =========================
 # 🚀 START
 # =========================
 
 if __name__ == "__main__":
-    executor.start_polling(dp, skip_updates=True)
+    executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
