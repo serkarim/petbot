@@ -743,7 +743,30 @@ async def delete_template(callback: types.CallbackQuery):
 
     await callback.answer("🗑 Шаблон удалён", show_alert=True)
     await templates_menu(callback)
-
+#---------------
+@dp.message_handler(commands=["test_report"])
+async def test_report_cmd(message: types.Message):
+    if message.from_user.id not in ADMINS:
+        return
+    
+    report = generate_weekly_report()
+    
+    # Отправляем в указанную тему
+    if REPORT_TOPIC_ID and REPORT_TOPIC_ID.isdigit():
+        await bot.send_message(
+            chat_id=REPORT_CHAT_ID,
+            text=report,
+            parse_mode="HTML",
+            message_thread_id=int(REPORT_TOPIC_ID)
+        )
+    else:
+        await bot.send_message(
+            chat_id=REPORT_CHAT_ID,
+            text=report,
+            parse_mode="HTML"
+        )
+    
+    await message.answer("✅ Отчёт отправлен в группу!")
 
 # =========================
 # 📝 ЛОГИ
@@ -954,4 +977,5 @@ async def on_startup(_):
 # =========================
 
 if __name__ == "__main__":
+
     executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
