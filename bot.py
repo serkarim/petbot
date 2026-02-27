@@ -14,11 +14,6 @@ from aiogram.dispatcher.filters.state import State, StatesGroup
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-# Для планировщика
-try:
-    from aiocron import crontab
-except ImportError:
-    crontab = None
 
 # =========================
 # 🔐 ENV
@@ -743,30 +738,7 @@ async def delete_template(callback: types.CallbackQuery):
 
     await callback.answer("🗑 Шаблон удалён", show_alert=True)
     await templates_menu(callback)
-#---------------
-@dp.message_handler(commands=["test_report"])
-async def test_report_cmd(message: types.Message):
-    if message.from_user.id not in ADMINS:
-        return
-    
-    report = generate_weekly_report()
-    
-    # Отправляем в указанную тему
-    if REPORT_TOPIC_ID and REPORT_TOPIC_ID.isdigit():
-        await bot.send_message(
-            chat_id=REPORT_CHAT_ID,
-            text=report,
-            parse_mode="HTML",
-            message_thread_id=int(REPORT_TOPIC_ID)
-        )
-    else:
-        await bot.send_message(
-            chat_id=REPORT_CHAT_ID,
-            text=report,
-            parse_mode="HTML"
-        )
-    
-    await message.answer("✅ Отчёт отправлен в группу!")
+
 
 # =========================
 # 📝 ЛОГИ
@@ -955,27 +927,42 @@ async def complaint_actions(callback: types.CallbackQuery):
 
 
 # =========================
-# ⏰ ПЛАНИРОВЩИК (НОВОЕ)
+# ⏰ ПЛАНИРОВЩИК (ОБНОВЛЁННЫЙ)
 # =========================
+
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
+import pytz
+
+scheduler = AsyncIOScheduler(timezone=pytz.timezone("Europe/Moscow"))
+
+async def scheduled_report_job():
+    """Задача: отправка еженедельного отчёта"""
+    logging.info("⏰ Запуск задачи: отправка отчёта")
+    await send_weekly_report()
 
 async def on_startup(_):
     """Запускается при старте бота"""
-    if crontab and REPORT_CHAT_ID:
-        # Каждую субботу в 18:30 по Москве = 15:30 UTC
-        crontab(
-            "30 15 * * 6",  # мин час день месяц день_недели (6 = суббота)
-            timezone="Europe/Moscow",
-            func=send_weekly_report
+    if REPORT_CHAT_ID:
+        # Добавляем задачу: каждую субботу в 18:30 по Москве
+        scheduler.add_job(
+            scheduled_report_job,
+            trigger=CronTrigger(hour=18, minute=30, day_of_week="sat", timezone=pytz.timezone("Europe/Moscow")),
+            id="weekly_report",
+            replace_existing=True
         )
-        logging.info("⏰ Планировщик отчётов запущен (суббота 18:30 МСК)")
-    elif not REPORT_CHAT_ID:
+        scheduler.start()
+        logging.info("⏰ Планировщик запущен: отчёт каждую субботу в 18:30 МСК")
+    else:
         logging.warning("⚠️ REPORT_CHAT_ID не задан — авто-отчёты отключены")
 
+async def on_shutdown(_):
+    """Очистка при остановке бота"""
+    scheduler.shutdown()
 
 # =========================
 # 🚀 START
 # =========================
 
 if __name__ == "__main__":
-
-    executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
+    executor.start_polling(dp, skip_updates=True, on_startup=on_startup, on_shutdown=on_shutdown)
