@@ -548,7 +548,7 @@ async def stats_all(callback: types.CallbackQuery):
 
 
 # =========================
-# 📄 ШАБЛОНЫ ОТЧЁТОВ (НОВОЕ)
+# 📄 ШАБЛОНЫ ОТЧЁТОВ (ИСПРАВЛЕНО)
 # =========================
 
 @dp.callback_query_handler(lambda c: c.data == "templates_menu")
@@ -564,7 +564,7 @@ async def templates_menu(callback: types.CallbackQuery):
         status = "✅" if t["active"] else "⭕"
         keyboard.add(InlineKeyboardButton(
             f"{status} {t['name']}",
-            callback_data=f"tmpl_{t['id']}"
+            callback_data=f"tmpl_view_{t['id']}"
         ))
 
     keyboard.add(
@@ -588,7 +588,8 @@ async def template_actions(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer("❌", show_alert=True)
         return
 
-    action = callback.data.split("_")[1]
+    parts = callback.data.split("_")
+    action = parts[1] if len(parts) > 1 else ""
 
     # Протестировать отчёт
     if action == "test":
@@ -607,34 +608,133 @@ async def template_actions(callback: types.CallbackQuery, state: FSMContext):
         await callback.message.answer("📝 Введите название нового шаблона:")
         return
 
-    # Редактирование существующего
-    try:
-        template_id = callback.data.split("_")[1]
-    except:
+    # Просмотр/редактирование шаблона
+    if action == "view":
+        template_id = parts[2] if len(parts) > 2 else None
+        if not template_id:
+            await callback.answer("❌ Ошибка: не указан ID шаблона", show_alert=True)
+            return
+
+        templates = get_report_templates()
+        template = next((t for t in templates if t["id"] == template_id), None)
+
+        if not template:
+            await callback.answer("❌ Шаблон не найден", show_alert=True)
+            return
+
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(
+            InlineKeyboardButton("✏️ Изменить текст", callback_data=f"tmpl_edit_text_{template_id}"),
+            InlineKeyboardButton("🔄 Сделать активным" if not template["active"] else "✅ Уже активен",
+                                 callback_data=f"tmpl_activate_{template_id}"),
+            InlineKeyboardButton("🗑 Удалить", callback_data=f"tmpl_delete_{template_id}")
+        )
+        keyboard.add(InlineKeyboardButton("🔙 Назад", callback_data="templates_menu"))
+
+        preview = template["text"][:200] + "..." if len(template["text"]) > 200 else template["text"]
+
+        await callback.message.edit_text(
+            f"📄 <b>Шаблон: {template['name']}</b>\n\n"
+            f"📋 <i>Предпросмотр:</i>\n<code>{preview}</code>\n\n"
+            f"🔁 Статус: {'✅ Активен' if template['active'] else '⭕ Не активен'}",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
         return
 
+    # Редактирование текста
+    if action == "edit" and len(parts) >= 4 and parts[2] == "text":
+        template_id = parts[3] if len(parts) > 3 else None
+        if not template_id:
+            await callback.answer("❌ Ошибка: не указан ID шаблона", show_alert=True)
+            return
+
+        await state.update_data(template_action="edit", template_id=template_id)
+        await ActionState.editing_template.set()
+
+        templates = get_report_templates()
+        template = next((t for t in templates if t["id"] == template_id), None)
+        current_text = template["text"] if template else "Шаблон не найден"
+
+        await callback.message.answer(
+            f"✏️ Введите новый текст шаблона.\n\n"
+            f"📋 <i>Текущий текст:</i>\n<code>{current_text[:300]}</code>\n\n"
+            f"Доступные переменные:\n"
+            f"<code>{{top_list}}</code> — список лидеров\n"
+            f"<code>{{date}}</code> — текущая дата\n"
+            f"<code>{{week_start}}</code> — дата начала недели\n\n"
+            f"Пример:\n"
+            f"<code>🏆 Итоги за {{week_start}}–{{date}}!\n\n{{top_list}}\n\nТак держать! 💪</code>",
+            parse_mode="HTML"
+        )
+        return
+
+    # Активация шаблона
+    if action == "activate":
+        template_id = parts[2] if len(parts) > 2 else None
+        if not template_id:
+            await callback.answer("❌ Ошибка: не указан ID шаблона", show_alert=True)
+            return
+
+        # Сначала деактивируем все
+        templates = get_report_templates()
+        for t in templates:
+            update_template(t["id"], "active", "нет")
+
+        # Активируем выбранный
+        update_template(template_id, "active", "да")
+
+        await callback.answer("✅ Шаблон активирован!", show_alert=True)
+        # Обновляем меню через edit_message_text
+        await templates_menu_show(callback.message)
+        return
+
+    # Удаление шаблона
+    if action == "delete":
+        template_id = parts[2] if len(parts) > 2 else None
+        if not template_id:
+            await callback.answer("❌ Ошибка: не указан ID шаблона", show_alert=True)
+            return
+
+        ws = get_templates_sheet()
+        rows = ws.get_all_values()
+
+        for idx, row in enumerate(rows[1:], start=2):
+            if row[0] == template_id:
+                ws.delete_rows(idx, idx)
+                break
+
+        await callback.answer("🗑 Шаблон удалён", show_alert=True)
+        # Обновляем меню через edit_message_text
+        await templates_menu_show(callback.message)
+        return
+
+    await callback.answer("❌ Неизвестное действие", show_alert=True)
+
+
+async def templates_menu_show(message: types.Message):
+    """Вспомогательная функция для обновления меню шаблонов"""
+    user_id = message.from_user.id
     templates = get_report_templates()
-    template = next((t for t in templates if t["id"] == template_id), None)
-
-    if not template:
-        await callback.answer("❌ Шаблон не найден", show_alert=True)
-        return
-
     keyboard = InlineKeyboardMarkup()
+
+    for t in templates:
+        status = "✅" if t["active"] else "⭕"
+        keyboard.add(InlineKeyboardButton(
+            f"{status} {t['name']}",
+            callback_data=f"tmpl_view_{t['id']}"
+        ))
+
     keyboard.add(
-        InlineKeyboardButton("✏️ Изменить текст", callback_data=f"tmpl_edit_text_{template_id}"),
-        InlineKeyboardButton("🔄 Сделать активным" if not template["active"] else "✅ Уже активен",
-                             callback_data=f"tmpl_activate_{template_id}"),
-        InlineKeyboardButton("🗑 Удалить", callback_data=f"tmpl_delete_{template_id}")
+        InlineKeyboardButton("➕ Добавить шаблон", callback_data="tmpl_add"),
+        InlineKeyboardButton("🔄 Протестировать отчёт", callback_data="tmpl_test"),
+        InlineKeyboardButton("🏠 В меню", callback_data="back_menu")
     )
-    keyboard.add(InlineKeyboardButton("🔙 Назад", callback_data="templates_menu"))
 
-    preview = template["text"][:200] + "..." if len(template["text"]) > 200 else template["text"]
-
-    await callback.message.edit_text(
-        f"📄 <b>Шаблон: {template['name']}</b>\n\n"
-        f"📋 <i>Предпросмотр:</i>\n<code>{preview}</code>\n\n"
-        f"🔁 Статус: {'✅ Активен' if template['active'] else '⭕ Не активен'}",
+    await message.edit_text(
+        "📄 <b>Шаблоны еженедельных отчётов</b>\n\n"
+        "Нажмите на шаблон для редактирования.\n"
+        "Зелёная галочка = активный шаблон.",
         reply_markup=keyboard,
         parse_mode="HTML"
     )
@@ -700,46 +800,6 @@ async def save_new_template(message: types.Message, state: FSMContext):
     new_id = add_template(name, text)
     await message.answer(f"✅ Шаблон '{name}' создан! ID: {new_id}", reply_markup=main_menu(message.from_user.id))
     await state.finish()
-
-
-@dp.callback_query_handler(lambda c: c.data.startswith("tmpl_activate_"))
-async def activate_template(callback: types.CallbackQuery):
-    if callback.from_user.id not in ADMINS:
-        await callback.answer("❌", show_alert=True)
-        return
-
-    # Сначала деактивируем все
-    templates = get_report_templates()
-    for t in templates:
-        update_template(t["id"], "active", "нет")
-
-    # Активируем выбранный
-    template_id = callback.data.replace("tmpl_activate_", "")
-    update_template(template_id, "active", "да")
-
-    await callback.answer("✅ Шаблон активирован!", show_alert=True)
-    await templates_menu(callback)  # Обновляем меню
-
-
-@dp.callback_query_handler(lambda c: c.data.startswith("tmpl_delete_"))
-async def delete_template(callback: types.CallbackQuery):
-    if callback.from_user.id not in ADMINS:
-        await callback.answer("❌", show_alert=True)
-        return
-
-    template_id = callback.data.replace("tmpl_delete_", "")
-    ws = get_templates_sheet()
-    rows = ws.get_all_values()
-
-    for idx, row in enumerate(rows[1:], start=2):
-        if row[0] == template_id:
-            ws.delete_rows(idx, idx)
-            break
-
-    await callback.answer("🗑 Шаблон удалён", show_alert=True)
-    await templates_menu(callback)
-
-
 # =========================
 # 📝 ЛОГИ
 # =========================
