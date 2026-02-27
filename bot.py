@@ -548,8 +548,56 @@ async def stats_all(callback: types.CallbackQuery):
 
 
 # =========================
-# 📄 ШАБЛОНЫ ОТЧЁТОВ (ИСПРАВЛЕНО)
+# 📄 ШАБЛОНЫ ОТЧЁТОВ (С ЛОГИРОВАНИЕМ)
 # =========================
+
+# ---------- ФУНКЦИИ РАБОТЫ С ШАБЛОНАМИ ----------
+def get_templates_sheet():
+    try:
+        return sheet.worksheet("Шаблоны отчётов")
+    except:
+        ws = sheet.add_worksheet("Шаблоны отчётов", rows=100, cols=4)
+        ws.append_row(["ID", "Название", "Текст шаблона", "Активен"])
+        ws.append_row(["1", "Стандарт", "🏆 Итоги недели!\n\n{top_list}\n\nТак держать! 💪", "да"])
+        return ws
+
+
+def get_report_templates():
+    ws = get_templates_sheet()
+    rows = ws.get_all_values()[1:]
+    return [
+        {"id": row[0], "name": row[1], "text": row[2], "active": row[3].lower() == "да"}
+        for row in rows if len(row) >= 4 and row[0].strip()
+    ]
+
+
+def get_active_template():
+    templates = get_report_templates()
+    active = [t for t in templates if t["active"]]
+    return active[0] if active else None
+
+
+def update_template(template_id, field, value):
+    ws = get_templates_sheet()
+    rows = ws.get_all_values()
+    for idx, row in enumerate(rows[1:], start=2):
+        if row[0] == template_id:
+            col = {"name": 2, "text": 3, "active": 4}.get(field)
+            if col:
+                ws.update_cell(idx, col, value)
+            return True
+    return False
+
+
+def add_template(name, text):
+    ws = get_templates_sheet()
+    rows = ws.get_all_values()
+    new_id = str(max([int(r[0]) for r in rows[1:] if r[0].isdigit()], default=0) + 1)
+    ws.append_row([new_id, name, text, "нет"])
+    return new_id
+
+
+# ---------- ХЕНДЛЕРЫ ----------
 
 @dp.callback_query_handler(lambda c: c.data == "templates_menu")
 async def templates_menu(callback: types.CallbackQuery):
@@ -590,6 +638,9 @@ async def template_actions(callback: types.CallbackQuery, state: FSMContext):
 
     parts = callback.data.split("_")
     action = parts[1] if len(parts) > 1 else ""
+    admin = callback.from_user
+    admin_name = f"@{admin.username}" if admin.username else admin.full_name
+    admin_id = admin.id
 
     # Протестировать отчёт
     if action == "test":
@@ -669,7 +720,7 @@ async def template_actions(callback: types.CallbackQuery, state: FSMContext):
         )
         return
 
-    # Активация шаблона
+    # Активация шаблона 🔥 С ЛОГИРОВАНИЕМ
     if action == "activate":
         template_id = parts[2] if len(parts) > 2 else None
         if not template_id:
@@ -684,12 +735,14 @@ async def template_actions(callback: types.CallbackQuery, state: FSMContext):
         # Активируем выбранный
         update_template(template_id, "active", "да")
 
+        # 🔥 ЛОГИРОВАНИЕ
+        append_log("АКТИВАЦИЯ_ШАБЛОНА", admin_name, admin_id, f"Шаблон ID:{template_id}")
+
         await callback.answer("✅ Шаблон активирован!", show_alert=True)
-        # Обновляем меню через edit_message_text
         await templates_menu_show(callback.message)
         return
 
-    # Удаление шаблона
+    # Удаление шаблона 🔥 С ЛОГИРОВАНИЕМ
     if action == "delete":
         template_id = parts[2] if len(parts) > 2 else None
         if not template_id:
@@ -704,8 +757,10 @@ async def template_actions(callback: types.CallbackQuery, state: FSMContext):
                 ws.delete_rows(idx, idx)
                 break
 
+        # 🔥 ЛОГИРОВАНИЕ
+        append_log("УДАЛЕНИЕ_ШАБЛОНА", admin_name, admin_id, f"Шаблон ID:{template_id}")
+
         await callback.answer("🗑 Шаблон удалён", show_alert=True)
-        # Обновляем меню через edit_message_text
         await templates_menu_show(callback.message)
         return
 
@@ -714,7 +769,6 @@ async def template_actions(callback: types.CallbackQuery, state: FSMContext):
 
 async def templates_menu_show(message: types.Message):
     """Вспомогательная функция для обновления меню шаблонов"""
-    user_id = message.from_user.id
     templates = get_report_templates()
     keyboard = InlineKeyboardMarkup()
 
@@ -775,6 +829,11 @@ async def save_template_text(message: types.Message, state: FSMContext):
     new_text = message.text
     update_template(template_id, "text", new_text)
 
+    # 🔥 ЛОГИРОВАНИЕ
+    user = message.from_user
+    username = f"@{user.username}" if user.username else user.full_name
+    append_log("ИЗМЕНЕНИЕ_ШАБЛОНА", username, user.id, f"Шаблон ID:{template_id}")
+
     await message.answer("✅ Текст шаблона обновлен!", reply_markup=main_menu(message.from_user.id))
     await state.finish()
 
@@ -798,6 +857,12 @@ async def save_new_template(message: types.Message, state: FSMContext):
         return
 
     new_id = add_template(name, text)
+
+    # 🔥 ЛОГИРОВАНИЕ
+    user = message.from_user
+    username = f"@{user.username}" if user.username else user.full_name
+    append_log("СОЗДАНИЕ_ШАБЛОНА", username, user.id, f"Шаблон '{name}' ID:{new_id}")
+
     await message.answer(f"✅ Шаблон '{name}' создан! ID: {new_id}", reply_markup=main_menu(message.from_user.id))
     await state.finish()
 # =========================
