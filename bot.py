@@ -581,23 +581,24 @@ async def reg_type_existing(callback: types.CallbackQuery, state: FSMContext):
         if not unregistered:
             await callback.message.edit_text(
                 "✅ Все участники уже зарегистрированы!",
-                reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 Назад", callback_data="apply_start")),
+                reply_markup=InlineKeyboardMarkup().add(
+                    InlineKeyboardButton("🔙 Назад", callback_data="apply_start")
+                ),
                 parse_mode="HTML"
             )
             await callback.answer()
             return
 
-        # 🔥 СОХРАНЯЕМ СПИСОК В FSM
         await state.update_data(unregistered_list=unregistered)
 
         keyboard = InlineKeyboardMarkup(row_width=2)
         for idx, nick in enumerate(unregistered[:30]):
-            # 🔥 ИСПРАВЛЕНО: Нет пробелов в callback_data
+            # 🔥 БЕЗ ПРОБЕЛОВ В callback_data
             keyboard.add(InlineKeyboardButton(nick, callback_data=f"reg_sel_{idx}"))
         keyboard.add(InlineKeyboardButton("🔙 Назад", callback_data="apply_start"))
 
         await callback.message.edit_text(
-            f"👤 Выберите ваш никнейм\nНайдено {len(unregistered)} участников без регистрации:",
+            f"👤 Выберите ваш никнейм\nНайдено {len(unregistered)} участников без р12313123132132егистрации:",
             reply_markup=keyboard,
             parse_mode="HTML"
         )
@@ -610,10 +611,13 @@ async def reg_type_existing(callback: types.CallbackQuery, state: FSMContext):
 @dp.callback_query_handler(lambda c: c.data.startswith("reg_sel_"))
 async def reg_select_existing(callback: types.CallbackQuery, state: FSMContext):
     try:
-        # 🔥 ИСПРАВЛЕНО: Заменяем на пустую строку, без пробелов
-        idx_str = callback.data.replace("reg_sel_", "", 1)
+        # 🔥 КРИТИЧЕСКИ ВАЖНО: replace на ПУСТУЮ строку "", БЕЗ пробелов
+        idx_str = callback.data.replace("reg_sel_", "", 1).strip()
 
-        if not idx_str.isdigit():
+        logging.info(f"🔍 Получен callback: {callback.data}, idx_str: {idx_str}")
+
+        if not idx_str or not idx_str.isdigit():
+            logging.error(f"❌ Неверный индекс: {idx_str}")
             await callback.answer("❌ Ошибка индекса", show_alert=True)
             return
 
@@ -621,8 +625,9 @@ async def reg_select_existing(callback: types.CallbackQuery, state: FSMContext):
         data = await state.get_data()
         unregistered = data.get("unregistered_list", [])
 
-        # 🔥 ПРОВЕРКА: Если список потерялся, загружаем заново
+        # 🔥 Если список потерялся - загружаем заново
         if not unregistered:
+            logging.warning("⚠️ Список unregistered пуст, загружаем заново")
             ws = sheet.worksheet("участники клана")
             rows = ws.get_all_values()[1:]
             unregistered = []
@@ -632,12 +637,16 @@ async def reg_select_existing(callback: types.CallbackQuery, state: FSMContext):
                     if not tg_id_in_table:
                         unregistered.append(row[0].strip())
             await state.update_data(unregistered_list=unregistered)
+            logging.info(f"✅ Загружено {len(unregistered)} участников")
 
         if idx >= len(unregistered):
+            logging.error(f"❌ Индекс {idx} вне диапазона {len(unregistered)}")
             await callback.answer("❌ Ник не найден", show_alert=True)
             return
 
         nickname = unregistered[idx]
+        logging.info(f"✅ Выбран ник: {nickname}")
+
         await state.update_data(selected_nick=nickname)
         await ActionState.reg_existing_confirm.set()
 
@@ -655,7 +664,7 @@ async def reg_select_existing(callback: types.CallbackQuery, state: FSMContext):
         )
         await callback.answer()
     except Exception as e:
-        logging.error(f"❌ reg_select_existing: {e}")
+        logging.error(f"❌ reg_select_existing: {e}", exc_info=True)
         await callback.answer("❌ Ошибка при выборе ника", show_alert=True)
 
 
