@@ -593,18 +593,15 @@ async def reg_type_existing(callback: types.CallbackQuery, state: FSMContext):
 
         keyboard = InlineKeyboardMarkup(row_width=2)
         for idx, nick in enumerate(unregistered[:30]):
-            # 🔥 БЕЗ ПРОБЕЛОВ В callback_data
             keyboard.add(InlineKeyboardButton(nick, callback_data=f"reg_sel_{idx}"))
         keyboard.add(InlineKeyboardButton("🔙 Назад", callback_data="apply_start"))
 
         await callback.message.edit_text(
-            f"👤 Выберите ваш никнейм\nНайдено {len(unregistered)} участников без р12313123132132егистрации:",
+            f"👤 Выберите ваш никнейм\nНайдено {len(unregistered)} участников без регистрации:",
             reply_markup=keyboard,
             parse_mode="HTML"
         )
-        print("123")
         await callback.answer()
-        print("huesos")
     except Exception as e:
         logging.error(f"❌ reg_type_existing: {e}")
         await callback.answer("❌ Ошибка загрузки списка", show_alert=True)
@@ -613,10 +610,9 @@ async def reg_type_existing(callback: types.CallbackQuery, state: FSMContext):
 @dp.callback_query_handler(lambda c: c.data.startswith("reg_sel_"))
 async def reg_select_existing(callback: types.CallbackQuery, state: FSMContext):
     try:
-        # 🔥 КРИТИЧЕСКИ ВАЖНО: replace на ПУСТУЮ строку "", БЕЗ пробелов
         idx_str = callback.data.replace("reg_sel_", "", 1).strip()
 
-        logging.info(f"🔍 Получен callback: {callback.data}, idx_str: {idx_str}")
+        logging.info(f"🔍 callback: {callback.data} | idx_str: {idx_str}")
 
         if not idx_str or not idx_str.isdigit():
             logging.error(f"❌ Неверный индекс: {idx_str}")
@@ -627,9 +623,8 @@ async def reg_select_existing(callback: types.CallbackQuery, state: FSMContext):
         data = await state.get_data()
         unregistered = data.get("unregistered_list", [])
 
-        # 🔥 Если список потерялся - загружаем заново
         if not unregistered:
-            logging.warning("⚠️ Список unregistered пуст, загружаем заново")
+            logging.warning("⚠️ Список пуст, загружаем заново")
             ws = sheet.worksheet("участники клана")
             rows = ws.get_all_values()[1:]
             unregistered = []
@@ -639,10 +634,9 @@ async def reg_select_existing(callback: types.CallbackQuery, state: FSMContext):
                     if not tg_id_in_table:
                         unregistered.append(row[0].strip())
             await state.update_data(unregistered_list=unregistered)
-            logging.info(f"✅ Загружено {len(unregistered)} участников")
 
         if idx >= len(unregistered):
-            logging.error(f"❌ Индекс {idx} вне диапазона {len(unregistered)}")
+            logging.error(f"❌ Индекс {idx} вне диапазона")
             await callback.answer("❌ Ник не найден", show_alert=True)
             return
 
