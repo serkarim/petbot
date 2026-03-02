@@ -470,6 +470,7 @@ async def app_submit(callback: types.CallbackQuery, state: FSMContext):
         logging.error(f"❌ app_submit: {e}")
         await callback.answer("❌ Ошибка отправки", show_alert=True)
 
+
 @dp.callback_query_handler(lambda c: c.data == "reg_type_existing")
 async def reg_type_existing(callback: types.CallbackQuery, state: FSMContext):
     try:
@@ -482,23 +483,34 @@ async def reg_type_existing(callback: types.CallbackQuery, state: FSMContext):
                 tg_id_in_table = row[8].strip() if len(row) > 8 else ""
                 if not tg_id_in_table:
                     unregistered.append(row[0].strip())
+
         if not unregistered:
-            await callback.message.edit_text("✅ <b>Все участники уже зарегистрированы!</b>", reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 Назад", callback_data="apply_start")), parse_mode="HTML")
+            await callback.message.edit_text(
+                "✅ Все участники уже зарегистрированы!",
+                reply_markup=InlineKeyboardMarkup().add(
+                    InlineKeyboardButton("🔙 Назад", callback_data="apply_start")
+                ),
+                parse_mode="HTML"
+            )
             await callback.answer()
             return
-        # 🔥 СОХРАНЯЕМ СПИСОК В FSM
+
         await state.update_data(unregistered_list=unregistered)
+
         keyboard = InlineKeyboardMarkup(row_width=2)
         for idx, nick in enumerate(unregistered[:30]):
-            # 🔥 ИСПРАВЛЕНО: add вместо insert + индекс вместо ника
             keyboard.add(InlineKeyboardButton(nick, callback_data=f"reg_sel_{idx}"))
         keyboard.add(InlineKeyboardButton("🔙 Назад", callback_data="apply_start"))
-        await callback.message.edit_text(f"👤 <b>Выберите ваш никнейм</b>\nНайдено {len(unregistered)} участников без регистрации:", reply_markup=keyboard, parse_mode="HTML")
+
+        await callback.message.edit_text(
+            f"👤 Выберите ваш никнейм\nНайдено {len(unregistered)} участников без регистрации test: ",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
         await callback.answer()
     except Exception as e:
         logging.error(f"❌ reg_type_existing: {e}")
         await callback.answer("❌ Ошибка загрузки списка", show_alert=True)
-
 @dp.callback_query_handler(lambda c: c.data.startswith("reg_sel_"))
 async def reg_select_existing(callback: types.CallbackQuery, state: FSMContext):
     try:
