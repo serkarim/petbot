@@ -13,7 +13,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 import pytz
-
+import html as html_lib  # Добавь этот импорт в начало файла, если нет
 # =========================
 # 🔐 ENV
 # =========================
@@ -495,60 +495,111 @@ async def app_submit(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.edit_text(f"✅ <b>Заявка отправлена!</b>\n\n📋 ID: <code>#{app_id}</code>\n\nОжидайте решения модераторов!", reply_markup=main_menu(tg_id, has_pending_app=True), parse_mode="HTML")
     await callback.answer()
 
+
 @dp.callback_query_handler(lambda c: c.data == "reg_type_existing")
 async def reg_type_existing(callback: types.CallbackQuery, state: FSMContext):
-    await ActionState.reg_select_existing.set()
-    ws = sheet.worksheet("участники клана")
-    rows = ws.get_all_values()[1:]
-    unregistered = []
-    for row in rows:
-        if len(row) >= 1 and row[0].strip():
-            tg_id_in_table = row[8].strip() if len(row) > 8 else ""
-            if not tg_id_in_table:
-                unregistered.append(row[0].strip())
-    if not unregistered:
-        await callback.message.edit_text("✅ <b>Все участники уже зарегистрированы!</b>", reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 Назад", callback_data="apply_start")), parse_mode="HTML")
+    try:
+        await ActionState.reg_select_existing.set()
+        ws = sheet.worksheet("участники клана")
+        rows = ws.get_all_values()[1:]
+        unregistered = []
+        for row in rows:
+            if len(row) >= 1 and row[0].strip():
+                tg_id_in_table = row[8].strip() if len(row) > 8 else ""
+                if not tg_id_in_table:
+                    unregistered.append(row[0].strip())
+
+        if not unregistered:
+            await callback.message.edit_text("✅ <b>Все участники уже зарегистрированы!</b>",
+                                             reply_markup=InlineKeyboardMarkup().add(
+                                                 InlineKeyboardButton("🔙 Назад", callback_data="apply_start")),
+                                             parse_mode="HTML")
+            await callback.answer()
+            return
+
+        keyboard = InlineKeyboardMarkup(row_width=2)
+        for nick in unregistered[:30]:
+            # ИСПРАВЛЕНО: insert -> add
+            keyboard.add(InlineKeyboardButton(nick, callback_data=f"reg_sel_{nick}"))
+
+        keyboard.add(InlineKeyboardButton("🔙 Назад", callback_data="apply_start"))
+        await callback.message.edit_text(
+            f"👤 <b>Выберите ваш никнейм</b>\nНайдено {len(unregistered)} участников без регистрации:",
+            reply_markup=keyboard, parse_mode="HTML")
         await callback.answer()
-        return
-    keyboard = InlineKeyboardMarkup(row_width=2)
-    for nick in unregistered[:30]:
-        keyboard.insert(InlineKeyboardButton(nick, callback_data=f"reg_sel_{nick}"))
-    keyboard.add(InlineKeyboardButton("🔙 Назад", callback_data="apply_start"))
-    await callback.message.edit_text(f"👤 <b>Выберите ваш никнейм</b>\n\nНайдено {len(unregistered)} участников без регистрации:", reply_markup=keyboard, parse_mode="HTML")
-    await callback.answer()
+    except Exception as e:
+        logging.error(f"Ошибка в reg_type_existing: {e}")
+        await callback.answer("❌ Ошибка загрузки списка", show_alert=True)
+
+
+
+
 
 @dp.callback_query_handler(lambda c: c.data.startswith("reg_sel_"))
 async def reg_select_existing(callback: types.CallbackQuery, state: FSMContext):
-    nickname = callback.data.replace("reg_sel_", "", 1)
-    await state.update_data(selected_nick=nickname)
-    await ActionState.reg_existing_confirm.set()
-    keyboard = InlineKeyboardMarkup()
-    keyboard.add(
-        InlineKeyboardButton("✅ Да, это я!", callback_data="reg_existing_yes"),
-        InlineKeyboardButton("❌ Нет, другой", callback_data="reg_type_existing")
-    )
-    await callback.message.edit_text(f"🔍 <b>Подтверждение</b>\n\nВы выбираете: <b>{nickname}</b>\n\nЭто правильный ник?", reply_markup=keyboard, parse_mode="HTML")
-    await callback.answer()
+    try:
+        nickname = callback.data.replace("reg_sel_", "", 1)
+        await state.update_data(selected_nick=nickname)
+        await ActionState.reg_existing_confirm.set()
+
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(
+            InlineKeyboardButton("✅ Да, это я!", callback_data="reg_existing_yes"),
+            InlineKeyboardButton("❌ Нет, другой", callback_data="reg_type_existing")
+        )
+
+        # ИСПРАВЛЕНО: Экранирование спецсимволов для HTML
+        safe_nickname = html_lib.escape(nickname)
+
+        await callback.message.edit_text(
+            f"🔍 <b>Подтверждение</b>\nВы выбираете: <b>{safe_nickname}</b>\nЭто правильный ник?",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"Ошибка в reg_select_existing: {e}")
+        await callback.answer("❌ Ошибка при выборе ника", show_alert=True)
+
 
 @dp.callback_query_handler(lambda c: c.data == "reg_existing_yes")
 async def reg_existing_confirm(callback: types.CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    nickname, tg_username, tg_id = data.get("selected_nick"), data.get("tg_username"), data.get("tg_id")
-    if not nickname:
-        await callback.answer("❌ Ошибка: ник не выбран", show_alert=True)
-        return
-    existing = find_member_by_tg_id(tg_id)
-    if existing:
-        await callback.message.edit_text(f"⚠️ <b>Ваш TG уже привязан!</b>\n\nВы зарегистрированы как: <b>{existing}</b>", reply_markup=main_menu(tg_id, is_registered=True), parse_mode="HTML")
-        await state.finish()
-        return
-    if update_member_tg_data(nickname, tg_username, tg_id):
-        append_log("РЕГИСТРАЦИЯ_УЧАСТНИК", tg_username, tg_id, nickname)
-        await state.finish()
-        await callback.message.edit_text(f"✅ <b>Регистрация завершена!</b>\n\nВы привязаны к: <b>{nickname}</b>\n\nТеперь доступны все функции!", reply_markup=main_menu(tg_id, is_registered=True), parse_mode="HTML")
-    else:
-        await callback.answer("❌ Ошибка обновления данных", show_alert=True)
-    await callback.answer()
+    try:
+        data = await state.get_data()
+        nickname, tg_username, tg_id = data.get("selected_nick"), data.get("tg_username"), data.get("tg_id")
+
+        if not nickname:
+            await callback.answer("❌ Ошибка: ник не выбран", show_alert=True)
+            return
+
+        existing = find_member_by_tg_id(tg_id)
+        if existing:
+            # ИСПРАВЛЕНО: Экранирование
+            safe_existing = html_lib.escape(existing)
+            await callback.message.edit_text(
+                f"⚠️ <b>Ваш TG уже привязан!</b>\nВы зарегистрированы как: <b>{safe_existing}</b>",
+                reply_markup=main_menu(tg_id, is_registered=True),
+                parse_mode="HTML"
+            )
+            await state.finish()
+            return
+
+        if update_member_tg_data(nickname, tg_username, tg_id):
+            append_log("РЕГИСТРАЦИЯ_УЧАСТНИК", tg_username, tg_id, nickname)
+            await state.finish()
+            # ИСПРАВЛЕНО: Экранирование
+            safe_nick = html_lib.escape(nickname)
+            await callback.message.edit_text(
+                f"✅ <b>Регистрация завершена!</b>\nВы привязаны к: <b>{safe_nick}</b>\nТеперь доступны все функции!",
+                reply_markup=main_menu(tg_id, is_registered=True),
+                parse_mode="HTML"
+            )
+        else:
+            await callback.answer("❌ Ошибка обновления данных", show_alert=True)
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"Ошибка в reg_existing_confirm: {e}")
+        await callback.answer("❌ Внутренняя ошибка регистрации", show_alert=True)
 
 @dp.callback_query_handler(lambda c: c.data == "app_status")
 async def app_status(callback: types.CallbackQuery):
