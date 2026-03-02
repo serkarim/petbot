@@ -417,83 +417,180 @@ async def cancel_handler(message: types.Message, state: FSMContext):
 # 📝 РЕГИСТРАЦИЯ
 # =========================
 
+# =========================
+# 📝 РЕГИСТРАЦИЯ
+# =========================
+
 @dp.callback_query_handler(lambda c: c.data == "apply_start")
 async def apply_start(callback: types.CallbackQuery, state: FSMContext):
-    user_id = callback.from_user.id
-    apps = get_applications(status="ожидает")
-    if any(app[4] == str(user_id) for app in apps):
-        await callback.answer("⚠️ У вас уже есть активная заявка!", show_alert=True)
-        return
-    await state.update_data(tg_username=callback.from_user.username or callback.from_user.full_name, tg_id=user_id)
-    keyboard = InlineKeyboardMarkup()
-    keyboard.add(
-        InlineKeyboardButton("🆕 Я новенький", callback_data="reg_type_new"),
-        InlineKeyboardButton("👤 Я уже в клане", callback_data="reg_type_existing")
-    )
-    keyboard.add(InlineKeyboardButton("🔙 Назад", callback_data="back_menu"))
-    await callback.message.edit_text("🔍 <b>Выберите вариант:</b>\n\n🆕 <b>Новенький</b> — подайте заявку на вступление\n👤 <b>Уже в клане</b> — привяжите аккаунт к существующему нику", reply_markup=keyboard, parse_mode="HTML")
-    await callback.answer()
+    try:
+        user_id = callback.from_user.id
+        apps = get_applications(status="ожидает")
+        if any(app[4] == str(user_id) for app in apps):
+            await callback.answer("⚠️ У вас уже есть активная заявка!", show_alert=True)
+            return
+
+        await state.update_data(
+            tg_username=callback.from_user.username or callback.from_user.full_name,
+            tg_id=user_id
+        )
+
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(
+            InlineKeyboardButton("🆕 Я новенький", callback_data="reg_type_new"),
+            InlineKeyboardButton("👤 Я уже в клане", callback_data="reg_type_existing")
+        )
+        keyboard.add(InlineKeyboardButton("🔙 Назад", callback_data="back_menu"))
+
+        await callback.message.edit_text(
+            "🔍 <b>Выберите вариант:</b>\n"
+            "🆕 <b>Новенький</b> — подайте заявку на вступление\n"
+            "👤 <b>Уже в клане</b> — привяжите аккаунт к существующему нику",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"❌ apply_start: {e}")
+        await callback.answer("❌ Ошибка", show_alert=True)
+
 
 @dp.callback_query_handler(lambda c: c.data == "reg_type_new")
 async def reg_type_new(callback: types.CallbackQuery, state: FSMContext):
-    await ActionState.reg_rules.set()
-    keyboard = InlineKeyboardMarkup()
-    keyboard.add(
-        InlineKeyboardButton("✅ Согласен с правилами", callback_data="rules_accept"),
-        InlineKeyboardButton("❌ Отмена", callback_data="apply_start")
-    )
-    await callback.message.edit_text("📜 <b>Правила клана PET</b>\n\n1️⃣ Уважение ко всем участникам\n2️⃣ Запрет на читы\n3️⃣ Активность в клане\n4️⃣ Выполнение приказов\n5️⃣ Конфиденциальность\n\n⚠️ Нарушение = предупреждение или кик!\n\n<b>Согласны?</b>", reply_markup=keyboard, parse_mode="HTML")
-    await callback.answer()
+    try:
+        await ActionState.reg_rules.set()
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(
+            InlineKeyboardButton("✅ Согласен с правилами", callback_data="rules_accept"),
+            InlineKeyboardButton("❌ Отмена", callback_data="apply_start")
+        )
+        await callback.message.edit_text(
+            "📜 <b>Правила клана PET</b>\n"
+            "1️⃣ Уважение ко всем участникам\n"
+            "2️⃣ Запрет на читы\n"
+            "3️⃣ Активность в клане\n"
+            "4️⃣ Выполнение приказов\n"
+            "5️⃣ Конфиденциальность\n"
+            "⚠️ Нарушение = предупреждение или кик!\n"
+            "<b>Согласны?</b>",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"❌ reg_type_new: {e}")
+        await callback.answer("❌ Ошибка", show_alert=True)
+
 
 @dp.callback_query_handler(lambda c: c.data == "rules_accept")
 async def rules_accepted(callback: types.CallbackQuery, state: FSMContext):
-    await ActionState.reg_steam_nick.set()
-    await callback.message.edit_text("🆕 <b>Введите ваш никнейм в Steam</b> (как в игре):\n\n<i>Пример: [PET] КИРЮХА</i>", parse_mode="HTML")
-    await callback.answer()
+    try:
+        await ActionState.reg_steam_nick.set()
+        await callback.message.edit_text(
+            "🆕 <b>Введите ваш никнейм в Steam</b> (как в игре):\n"
+            "<i>Пример: [PET] КИРЮХА</i>",
+            parse_mode="HTML"
+        )
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"❌ rules_accepted: {e}")
+
 
 @dp.message_handler(state=ActionState.reg_steam_nick)
 async def reg_save_steam_nick(message: types.Message, state: FSMContext):
-    await state.update_data(steam_nick=message.text.strip())
-    await ActionState.reg_steam_id.set()
-    await message.answer("🎮 <b>Введите Steam ID</b> (64-bit):\n\n<i>Пример: 76561198984240881</i>\n\nКак узнать: https://steamid.io/", parse_mode="HTML")
+    try:
+        await state.update_data(steam_nick=message.text.strip())
+        await ActionState.reg_steam_id.set()
+        await message.answer(
+            "🎮 <b>Введите Steam ID</b> (64-bit):\n"
+            "<i>Пример: 76561198984240881</i>\n"
+            "Как узнать: https://steamid.io/",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        logging.error(f"❌ reg_save_steam_nick: {e}")
+
 
 @dp.message_handler(state=ActionState.reg_steam_id)
 async def reg_save_steam_id(message: types.Message, state: FSMContext):
-    steam_id = message.text.strip()
-    if not steam_id.isdigit() or len(steam_id) < 17:
-        await message.answer("❌ Неверный формат Steam ID. Попробуйте ещё раз:")
-        return
-    await state.update_data(steam_id=steam_id)
-    await ActionState.reg_confirm.set()
-    data = await state.get_data()
-    keyboard = InlineKeyboardMarkup()
-    keyboard.add(
-        InlineKeyboardButton("✅ Подтвердить заявку", callback_data="app_submit"),
-        InlineKeyboardButton("❌ Изменить", callback_data="reg_type_new")
-    )
-    await message.answer(f"📋 <b>Проверьте данные:</b>\n\n🎮 Ник: <code>{data['steam_nick']}</code>\n🆔 Steam ID: <code>{steam_id}</code>\n👤 TG: <code>{message.from_user.full_name}</code>\n\n<b>Всё верно?</b>", reply_markup=keyboard, parse_mode="HTML")
+    try:
+        steam_id = message.text.strip()
+        if not steam_id.isdigit() or len(steam_id) < 17:
+            await message.answer("❌ Неверный формат Steam ID. Попробуйте ещё раз:")
+            return
+
+        await state.update_data(steam_id=steam_id)
+        await ActionState.reg_confirm.set()
+        data = await state.get_data()
+
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(
+            InlineKeyboardButton("✅ Подтвердить заявку", callback_data="app_submit"),
+            InlineKeyboardButton("❌ Изменить", callback_data="reg_type_new")
+        )
+
+        await message.answer(
+            f"📋 <b>Проверьте данные:</b>\n"
+            f"🎮 Ник: <code>{data['steam_nick']}</code>\n"
+            f"🆔 Steam ID: <code>{steam_id}</code>\n"
+            f"👤 TG: <code>{message.from_user.full_name}</code>\n"
+            f"<b>Всё верно?</b>",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        logging.error(f"❌ reg_save_steam_id: {e}")
+
 
 @dp.callback_query_handler(lambda c: c.data == "app_submit")
 async def app_submit(callback: types.CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    steam_nick, steam_id, tg_username, tg_id = data.get("steam_nick"), data.get("steam_id"), data.get("tg_username"), data.get("tg_id")
-    if not all([steam_nick, steam_id, tg_id]):
-        await callback.answer("❌ Ошибка данных", show_alert=True)
-        return
-    app_id = add_application(steam_nick, steam_id, tg_username, tg_id)
-    append_log("ЗАЯВКА_НА_ВСТУПЛЕНИЕ", tg_username, tg_id, steam_nick)
-    await state.finish()
-    for admin_id in ADMINS:
-        try:
-            kb = InlineKeyboardMarkup().add(
-                InlineKeyboardButton("✅ Принять", callback_data=f"app_accept_{app_id}"),
-                InlineKeyboardButton("❌ Отклонить", callback_data=f"app_reject_{app_id}")
-            )
-            await bot.send_message(admin_id, f"📬 <b>Новая заявка!</b>\n\n🆔 #{app_id}\n🎮 <code>{steam_nick}</code>\n🆔 <code>{steam_id}</code>\n👤 {tg_username}\n🆔 <code>{tg_id}</code>\n🕒 {datetime.now().strftime('%d.%m.%Y %H:%M')}", reply_markup=kb, parse_mode="HTML")
-        except Exception as e:
-            logging.error(f"❌ Ошибка уведомления админа: {e}")
-    await callback.message.edit_text(f"✅ <b>Заявка отправлена!</b>\n\n📋 ID: <code>#{app_id}</code>\n\nОжидайте решения модераторов!", reply_markup=main_menu(tg_id, has_pending_app=True), parse_mode="HTML")
-    await callback.answer()
+    try:
+        data = await state.get_data()
+        steam_nick = data.get("steam_nick")
+        steam_id = data.get("steam_id")
+        tg_username = data.get("tg_username")
+        tg_id = data.get("tg_id")
+
+        if not all([steam_nick, steam_id, tg_id]):
+            await callback.answer("❌ Ошибка данных", show_alert=True)
+            return
+
+        app_id = add_application(steam_nick, steam_id, tg_username, tg_id)
+        append_log("ЗАЯВКА_НА_ВСТУПЛЕНИЕ", tg_username, tg_id, steam_nick)
+        await state.finish()
+
+        for admin_id in ADMINS:
+            try:
+                kb = InlineKeyboardMarkup().add(
+                    InlineKeyboardButton("✅ Принять", callback_data=f"app_accept_{app_id}"),
+                    InlineKeyboardButton("❌ Отклонить", callback_data=f"app_reject_{app_id}")
+                )
+                await bot.send_message(
+                    admin_id,
+                    f"📬 <b>Новая заявка!</b>\n"
+                    f"🆔 #{app_id}\n"
+                    f"🎮 <code>{steam_nick}</code>\n"
+                    f"🆔 <code>{steam_id}</code>\n"
+                    f"👤 {tg_username}\n"
+                    f"🆔 <code>{tg_id}</code>\n"
+                    f"🕒 {datetime.now().strftime('%d.%m.%Y %H:%M')}",
+                    reply_markup=kb,
+                    parse_mode="HTML"
+                )
+            except Exception as e:
+                logging.error(f"❌ Ошибка уведомления админа: {e}")
+
+        await callback.message.edit_text(
+            f"✅ <b>Заявка отправлена!</b>\n"
+            f"📋 ID: <code>#{app_id}</code>\n"
+            f"Ожидайте решения модераторов!",
+            reply_markup=main_menu(tg_id, has_pending_app=True),
+            parse_mode="HTML"
+        )
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"❌ app_submit: {e}")
+        await callback.answer("❌ Ошибка отправки", show_alert=True)
 
 
 @dp.callback_query_handler(lambda c: c.data == "reg_type_existing")
@@ -503,6 +600,7 @@ async def reg_type_existing(callback: types.CallbackQuery, state: FSMContext):
         ws = sheet.worksheet("участники клана")
         rows = ws.get_all_values()[1:]
         unregistered = []
+
         for row in rows:
             if len(row) >= 1 and row[0].strip():
                 tg_id_in_table = row[8].strip() if len(row) > 8 else ""
@@ -510,35 +608,63 @@ async def reg_type_existing(callback: types.CallbackQuery, state: FSMContext):
                     unregistered.append(row[0].strip())
 
         if not unregistered:
-            await callback.message.edit_text("✅ <b>Все участники уже зарегистрированы!</b>",
-                                             reply_markup=InlineKeyboardMarkup().add(
-                                                 InlineKeyboardButton("🔙 Назад", callback_data="apply_start")),
-                                             parse_mode="HTML")
+            await callback.message.edit_text(
+                "✅ <b>Все участники уже зарегистрированы!</b>",
+                reply_markup=InlineKeyboardMarkup().add(
+                    InlineKeyboardButton("🔙 Назад", callback_data="apply_start")
+                ),
+                parse_mode="HTML"
+            )
             await callback.answer()
             return
 
         keyboard = InlineKeyboardMarkup(row_width=2)
         for nick in unregistered[:30]:
-            # ИСПРАВЛЕНО: insert -> add
-            keyboard.add(InlineKeyboardButton(nick, callback_data=f"reg_sel_{nick}"))
+            # 🔥 ВАЖНО: Обрезаем callback_data до 64 байт (лимит Telegram)
+            # Полный ник сохраняем в состоянии через FSM
+            safe_callback = f"reg_sel_{hash(nick) & 0xFFFFFFFF}"
+            keyboard.add(InlineKeyboardButton(nick, callback_data=safe_callback))
 
         keyboard.add(InlineKeyboardButton("🔙 Назад", callback_data="apply_start"))
+
         await callback.message.edit_text(
-            f"👤 <b>Выберите ваш никнейм</b>\nНайдено {len(unregistered)} участников без регистрации:",
-            reply_markup=keyboard, parse_mode="HTML")
+            f"👤 <b>Выберите ваш никнейм</b>\n"
+            f"Найдено {len(unregistered)} участников без регистрации:",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
         await callback.answer()
     except Exception as e:
-        logging.error(f"Ошибка в reg_type_existing: {e}")
+        logging.error(f"❌ reg_type_existing: {e}")
         await callback.answer("❌ Ошибка загрузки списка", show_alert=True)
-
-
-
 
 
 @dp.callback_query_handler(lambda c: c.data.startswith("reg_sel_"))
 async def reg_select_existing(callback: types.CallbackQuery, state: FSMContext):
     try:
-        nickname = callback.data.replace("reg_sel_", "", 1)
+        # 🔥 ВАЖНО: Ищем ник по хешу в списке незарегистрированных
+        ws = sheet.worksheet("участники клана")
+        rows = ws.get_all_values()[1:]
+        unregistered = []
+
+        for row in rows:
+            if len(row) >= 1 and row[0].strip():
+                tg_id_in_table = row[8].strip() if len(row) > 8 else ""
+                if not tg_id_in_table:
+                    unregistered.append(row[0].strip())
+
+        callback_hash = callback.data.replace("reg_sel_", "", 1)
+        nickname = None
+
+        for nick in unregistered:
+            if f"reg_sel_{hash(nick) & 0xFFFFFFFF}" == callback.data:
+                nickname = nick
+                break
+
+        if not nickname:
+            await callback.answer("❌ Ник не найден", show_alert=True)
+            return
+
         await state.update_data(selected_nick=nickname)
         await ActionState.reg_existing_confirm.set()
 
@@ -548,17 +674,19 @@ async def reg_select_existing(callback: types.CallbackQuery, state: FSMContext):
             InlineKeyboardButton("❌ Нет, другой", callback_data="reg_type_existing")
         )
 
-        # ИСПРАВЛЕНО: Экранирование спецсимволов для HTML
+        # 🔥 ВАЖНО: Экранирование HTML-тегов
         safe_nickname = html_lib.escape(nickname)
 
         await callback.message.edit_text(
-            f"🔍 <b>Подтверждение</b>\nВы выбираете: <b>{safe_nickname}</b>\nЭто правильный ник?",
+            f"🔍 <b>Подтверждение</b>\n"
+            f"Вы выбираете: <b>{safe_nickname}</b>\n"
+            f"Это правильный ник?",
             reply_markup=keyboard,
             parse_mode="HTML"
         )
         await callback.answer()
     except Exception as e:
-        logging.error(f"Ошибка в reg_select_existing: {e}")
+        logging.error(f"❌ reg_select_existing: {e}")
         await callback.answer("❌ Ошибка при выборе ника", show_alert=True)
 
 
@@ -566,7 +694,9 @@ async def reg_select_existing(callback: types.CallbackQuery, state: FSMContext):
 async def reg_existing_confirm(callback: types.CallbackQuery, state: FSMContext):
     try:
         data = await state.get_data()
-        nickname, tg_username, tg_id = data.get("selected_nick"), data.get("tg_username"), data.get("tg_id")
+        nickname = data.get("selected_nick")
+        tg_username = data.get("tg_username")
+        tg_id = data.get("tg_id")
 
         if not nickname:
             await callback.answer("❌ Ошибка: ник не выбран", show_alert=True)
@@ -574,10 +704,10 @@ async def reg_existing_confirm(callback: types.CallbackQuery, state: FSMContext)
 
         existing = find_member_by_tg_id(tg_id)
         if existing:
-            # ИСПРАВЛЕНО: Экранирование
             safe_existing = html_lib.escape(existing)
             await callback.message.edit_text(
-                f"⚠️ <b>Ваш TG уже привязан!</b>\nВы зарегистрированы как: <b>{safe_existing}</b>",
+                f"⚠️ <b>Ваш TG уже привязан!</b>\n"
+                f"Вы зарегистрированы как: <b>{safe_existing}</b>",
                 reply_markup=main_menu(tg_id, is_registered=True),
                 parse_mode="HTML"
             )
@@ -587,122 +717,61 @@ async def reg_existing_confirm(callback: types.CallbackQuery, state: FSMContext)
         if update_member_tg_data(nickname, tg_username, tg_id):
             append_log("РЕГИСТРАЦИЯ_УЧАСТНИК", tg_username, tg_id, nickname)
             await state.finish()
-            # ИСПРАВЛЕНО: Экранирование
             safe_nick = html_lib.escape(nickname)
             await callback.message.edit_text(
-                f"✅ <b>Регистрация завершена!</b>\nВы привязаны к: <b>{safe_nick}</b>\nТеперь доступны все функции!",
+                f"✅ <b>Регистрация завершена!</b>\n"
+                f"Вы привязаны к: <b>{safe_nick}</b>\n"
+                f"Теперь доступны все функции!",
                 reply_markup=main_menu(tg_id, is_registered=True),
                 parse_mode="HTML"
             )
         else:
             await callback.answer("❌ Ошибка обновления данных", show_alert=True)
+
         await callback.answer()
     except Exception as e:
-        logging.error(f"Ошибка в reg_existing_confirm: {e}")
+        logging.error(f"❌ reg_existing_confirm: {e}")
         await callback.answer("❌ Внутренняя ошибка регистрации", show_alert=True)
+
 
 @dp.callback_query_handler(lambda c: c.data == "app_status")
 async def app_status(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    apps = get_applications()
-    user_app = next((app for app in apps if app[4] == str(user_id)), None)
-    if not user_app:
-        await callback.answer("❌ У вас нет заявок", show_alert=True)
-        return
-    status_emoji = {"ожидает": "🟡", "принят": "🟢", "отклонен": "🔴"}.get(user_app[6], "⚪")
-    text = f"📋 <b>Статус заявки</b>\n\n🆔 #{user_app[0]}\n🎮 <code>{user_app[1]}</code>\n🕒 {user_app[5]}\n{status_emoji} <b>{user_app[6]}</b>\n\n"
-    if user_app[6] == "принят":
-        text += f"🎉 Поздравляем! Ссылка: {GROUP_LINK}"
-    elif user_app[6] == "отклонен":
-        text += "❌ Заявка отклонена."
-    else:
-        text += "⏳ На рассмотрении."
-    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu")), parse_mode="HTML")
-    await callback.answer()
+    try:
+        user_id = callback.from_user.id
+        apps = get_applications()
+        user_app = next((app for app in apps if app[4] == str(user_id)), None)
 
-# =========================
-# 📬 АДМИН-ПАНЕЛЬ ЗАЯВОК
-# =========================
-
-@dp.callback_query_handler(lambda c: c.data == "applications_menu")
-async def applications_menu(callback: types.CallbackQuery):
-    if callback.from_user.id not in ADMINS:
-        await callback.answer("❌ Только для админов", show_alert=True)
-        return
-    apps = get_applications(status="ожидает")
-    keyboard = InlineKeyboardMarkup()
-    if not apps:
-        keyboard.add(InlineKeyboardButton("📭 Нет заявок", callback_data="none"))
-    else:
-        for app in apps:
-            keyboard.add(InlineKeyboardButton(f"📬 #{app[0]} | {app[1]}", callback_data=f"app_view_{app[0]}"))
-    keyboard.add(InlineKeyboardButton("🟢 Принятые", callback_data="apps_accepted"), InlineKeyboardButton("🔴 Отклонённые", callback_data="apps_rejected"), InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
-    await callback.message.edit_text(f"📬 <b>Заявки</b>\n\n🟡 Ожидает: {len(apps)}", reply_markup=keyboard, parse_mode="HTML")
-    await callback.answer()
-
-@dp.callback_query_handler(lambda c: c.data.startswith("app_"))
-async def app_actions(callback: types.CallbackQuery):
-    if callback.from_user.id not in ADMINS:
-        await callback.answer("❌", show_alert=True)
-        return
-    parts = callback.data.split("_")
-    action = parts[1] if len(parts) > 1 else ""
-    if action == "view":
-        app_id = parts[2] if len(parts) > 2 else None
-        app = get_application_by_id(app_id) if app_id else None
-        if not app:
-            await callback.answer("❌ Не найдено", show_alert=True)
+        if not user_app:
+            await callback.answer("❌ У вас нет заявок", show_alert=True)
             return
-        kb = InlineKeyboardMarkup().add(
-            InlineKeyboardButton("✅ Принять", callback_data=f"app_accept_{app_id}"),
-            InlineKeyboardButton("❌ Отклонить", callback_data=f"app_reject_{app_id}")
-        ).add(InlineKeyboardButton("🔙 Назад", callback_data="applications_menu"))
-        text = f"📬 <b>Заявка #{app['id']}</b>\n\n🎮 <code>{app['nick']}</code>\n🆔 <code>{app['steam_id']}</code>\n👤 {app['tg_username']}\n🆔 <code>{app['tg_id']}</code>\n🕒 {app['date']}\n🟡 {app['status']}"
-        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-        return
-    if action == "accept":
-        app_id = parts[2] if len(parts) > 2 else None
-        app = get_application_by_id(app_id) if app_id else None
-        if not app:
-            await callback.answer("❌ Не найдено", show_alert=True)
-            return
-        update_application_status(app_id, "принят")
-        if add_new_member(app['nick'], app['steam_id'], app['tg_username'], app['tg_id']):
-            try:
-                await bot.send_message(int(app['tg_id']), f"🎉 <b>Заявка принята!</b>\n\nДобро пожаловать в PET!\n\n🔗 {GROUP_LINK}", parse_mode="HTML")
-            except:
-                pass
-            append_log("ЗАЯВКА_ПРИНЯТА", callback.from_user.full_name, callback.from_user.id, app['nick'])
-            await callback.answer("✅ Принято! Участник добавлен", show_alert=True)
+
+        status_emoji = {"ожидает": "🟡", "принят": "🟢", "отклонен": "🔴"}.get(user_app[6], "⚪")
+        text = (
+            f"📋 <b>Статус заявки</b>\n"
+            f"🆔 #{user_app[0]}\n"
+            f"🎮 <code>{user_app[1]}</code>\n"
+            f"🕒 {user_app[5]}\n"
+            f"{status_emoji} <b>{user_app[6]}</b>\n"
+        )
+
+        if user_app[6] == "принят":
+            text += f"🎉 Поздравляем! Ссылка: {GROUP_LINK}"
+        elif user_app[6] == "отклонен":
+            text += "❌ Заявка отклонена."
         else:
-            await callback.answer("⚠️ Уже существует", show_alert=True)
-        await applications_menu(callback)
-        return
-    if action == "reject":
-        app_id = parts[2] if len(parts) > 2 else None
-        app = get_application_by_id(app_id) if app_id else None
-        if not app:
-            await callback.answer("❌ Не найдено", show_alert=True)
-            return
-        update_application_status(app_id, "отклонен")
-        try:
-            await bot.send_message(int(app['tg_id']), "❌ <b>Заявка отклонена</b>\n\nПопробуйте через 7 дней.", parse_mode="HTML")
-        except:
-            pass
-        append_log("ЗАЯВКА_ОТКЛОНЕНА", callback.from_user.full_name, callback.from_user.id, app['nick'])
-        await callback.answer("❌ Отклонено", show_alert=True)
-        await applications_menu(callback)
-        return
-    if action in ["accepted", "rejected"]:
-        status = "принят" if action == "accepted" else "отклонен"
-        apps = get_applications(status=status)
-        kb = InlineKeyboardMarkup()
-        for app in apps[:10]:
-            kb.add(InlineKeyboardButton(f"#{app[0]} | {app[1]}", callback_data=f"app_view_{app[0]}"))
-        kb.add(InlineKeyboardButton("🔙 Назад", callback_data="applications_menu"))
-        await callback.message.edit_text(f"{'🟢' if action == 'accepted' else '🔴'} <b>{'Принятые' if action == 'accepted' else 'Отклонённые'}</b>\n\nВсего: {len(apps)}", reply_markup=kb, parse_mode="HTML")
-        return
-    await callback.answer("❌ Неизвестное действие", show_alert=True)
+            text += "⏳ На рассмотрении."
+
+        await callback.message.edit_text(
+            text,
+            reply_markup=InlineKeyboardMarkup().add(
+                InlineKeyboardButton("🏠 В меню", callback_data="back_menu")
+            ),
+            parse_mode="HTML"
+        )
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"❌ app_status: {e}")
+        await callback.answer("❌ Ошибка", show_alert=True)
 
 # =========================
 # 👤 ПРОФИЛЬ
