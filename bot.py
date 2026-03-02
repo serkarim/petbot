@@ -602,7 +602,9 @@ async def reg_type_existing(callback: types.CallbackQuery, state: FSMContext):
             reply_markup=keyboard,
             parse_mode="HTML"
         )
+        print("123")
         await callback.answer()
+        print("huesos")
     except Exception as e:
         logging.error(f"❌ reg_type_existing: {e}")
         await callback.answer("❌ Ошибка загрузки списка", show_alert=True)
