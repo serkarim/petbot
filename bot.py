@@ -600,7 +600,6 @@ async def reg_type_existing(callback: types.CallbackQuery, state: FSMContext):
         ws = sheet.worksheet("участники клана")
         rows = ws.get_all_values()[1:]
         unregistered = []
-
         for row in rows:
             if len(row) >= 1 and row[0].strip():
                 tg_id_in_table = row[8].strip() if len(row) > 8 else ""
@@ -618,12 +617,13 @@ async def reg_type_existing(callback: types.CallbackQuery, state: FSMContext):
             await callback.answer()
             return
 
+        # 🔥 ВАЖНО: Сохраняем список в состоянии FSM
+        await state.update_data(unregistered_list=unregistered)
+
         keyboard = InlineKeyboardMarkup(row_width=2)
-        for nick in unregistered[:30]:
-            # 🔥 ВАЖНО: Обрезаем callback_data до 64 байт (лимит Telegram)
-            # Полный ник сохраняем в состоянии через FSM
-            safe_callback = f"reg_sel_{hash(nick) & 0xFFFFFFFF}"
-            keyboard.add(InlineKeyboardButton(nick, callback_data=safe_callback))
+        for idx, nick in enumerate(unregistered[:30]):
+            # 🔥 ВАЖНО: Используем индекс (всегда < 64 байт)
+            keyboard.add(InlineKeyboardButton(nick, callback_data=f"reg_sel_{idx}"))
 
         keyboard.add(InlineKeyboardButton("🔙 Назад", callback_data="apply_start"))
 
@@ -642,29 +642,21 @@ async def reg_type_existing(callback: types.CallbackQuery, state: FSMContext):
 @dp.callback_query_handler(lambda c: c.data.startswith("reg_sel_"))
 async def reg_select_existing(callback: types.CallbackQuery, state: FSMContext):
     try:
-        # 🔥 ВАЖНО: Ищем ник по хешу в списке незарегистрированных
-        ws = sheet.worksheet("участники клана")
-        rows = ws.get_all_values()[1:]
-        unregistered = []
+        # 🔥 ВАЖНО: Получаем индекс и находим ник по списку из состояния
+        idx_str = callback.data.replace("reg_sel_", "", 1)
+        if not idx_str.isdigit():
+            await callback.answer("❌ Ошибка индекса", show_alert=True)
+            return
 
-        for row in rows:
-            if len(row) >= 1 and row[0].strip():
-                tg_id_in_table = row[8].strip() if len(row) > 8 else ""
-                if not tg_id_in_table:
-                    unregistered.append(row[0].strip())
+        idx = int(idx_str)
+        data = await state.get_data()
+        unregistered = data.get("unregistered_list", [])
 
-        callback_hash = callback.data.replace("reg_sel_", "", 1)
-        nickname = None
-
-        for nick in unregistered:
-            if f"reg_sel_{hash(nick) & 0xFFFFFFFF}" == callback.data:
-                nickname = nick
-                break
-
-        if not nickname:
+        if idx >= len(unregistered):
             await callback.answer("❌ Ник не найден", show_alert=True)
             return
 
+        nickname = unregistered[idx]
         await state.update_data(selected_nick=nickname)
         await ActionState.reg_existing_confirm.set()
 
@@ -732,7 +724,6 @@ async def reg_existing_confirm(callback: types.CallbackQuery, state: FSMContext)
     except Exception as e:
         logging.error(f"❌ reg_existing_confirm: {e}")
         await callback.answer("❌ Внутренняя ошибка регистрации", show_alert=True)
-
 
 @dp.callback_query_handler(lambda c: c.data == "app_status")
 async def app_status(callback: types.CallbackQuery):
