@@ -907,16 +907,16 @@ async def member_selected(callback: types.CallbackQuery, state: FSMContext):
         if is_admin:
             kb.add(InlineKeyboardButton("⚠ Пред", callback_data="action_pred"))
 
-        if info:
-            emoji = "✅" if info['desirable'] == "желателен" else "❌"
-            safe_nick = html_lib.escape(info['nick'])
-            text = f"👤 Карточка: {safe_nick}\n🎮 Steam: `{info['steam_id']}`\n🎖 Роль: {info['role']}\n⚠️ Предупреждения: {info['warns']}\n👏 Похвалы: {info['praises']}\n📊 Рейтинг: {info['score']}\n📌 Статус: {emoji} {info['desirable']}\nВыберите действие:"
+            if info:
+                emoji = "✅" if info['desirable'] == "желателен" else "❌"
+                safe_nick = html_lib.escape(info['nick'])
+                text = f"👤 Карточка: {safe_nick}\n🎮 Steam: `{info['steam_id']}`\n🎖 Роль: {info['role']}\n⚠️ Предупреждения: {info['warns']}\n👏 Похвалы: {info['praises']}\n📊 Рейтинг: {info['score']}\n📌 Статус: {emoji} {info['desirable']}\nВыберите действие:"
+            else:
+                safe_member = html_lib.escape(member)
+                text = f"⚠️ Участник {safe_member}\nИнформация не найдена.\nВыберите действие:"
         else:
             safe_member = html_lib.escape(member)
-            text = f"⚠️ Участник {safe_member}\nИнформация не найдена.\nВыберите действие:"
-        else:
-        safe_member = html_lib.escape(member)
-        text = f"👤 Участник: {safe_member}\nВыберите действие:"
+            text = f"👤 Участник: {safe_member}\nВыберите действие:"
 
     kb.add(
         InlineKeyboardButton("👏 Похвала", callback_data="action_praise"),
