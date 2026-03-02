@@ -918,18 +918,19 @@ async def member_selected(callback: types.CallbackQuery, state: FSMContext):
             safe_member = html_lib.escape(member)
             text = f"👤 Участник: {safe_member}\nВыберите действие:"
 
-    kb.add(
-        InlineKeyboardButton("👏 Похвала", callback_data="action_praise"),
-        InlineKeyboardButton("⚖ Жалоба", callback_data="action_complaint"),
-        InlineKeyboardButton("🏠 В меню", callback_data="back_menu")
-    )
+        # 🔥 ИСПРАВЛЕНО: этот блок должен быть внутри try
+        kb.add(
+            InlineKeyboardButton("👏 Похвала", callback_data="action_praise"),
+            InlineKeyboardButton("⚖ Жалоба", callback_data="action_complaint"),
+            InlineKeyboardButton("🏠 В меню", callback_data="back_menu")
+        )
 
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-    await callback.answer()
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+        await callback.answer()
 
-except Exception as e:
-logging.error(f"❌ member_selected: {e}")
-
+    except Exception as e:
+        logging.error(f"❌ member_selected: {e}")
+        await callback.answer("❌ Ошибка", show_alert=True)
 
 @dp.callback_query_handler(lambda c: c.data.startswith("action_"))
 async def action_selected(callback: types.CallbackQuery, state: FSMContext):
