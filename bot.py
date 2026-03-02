@@ -714,13 +714,13 @@ async def member_selected(callback: types.CallbackQuery, state: FSMContext):
         kb = InlineKeyboardMarkup()
         if is_admin:
             kb.add(InlineKeyboardButton("⚠ Пред", callback_data="action_pred"))
-        if info:
-            emoji = "✅" if info['desirable'] == "желателен" else "❌"
-            safe_nick = html_lib.escape(info['nick'])
-            text = f"👤 <b>Карточка: {safe_nick}</b>\n🎮 <b>Steam:</b> <code>{info['steam_id']}</code>\n🎖 <b>Роль:</b> {info['role']}\n⚠️ <b>Предупреждения:</b> {info['warns']}\n👏 <b>Похвалы:</b> {info['praises']}\n📊 <b>Рейтинг:</b> {info['score']}\n📌 <b>Статус:</b> {emoji} {info['desirable']}\n<i>Выберите действие:</i>"
-        else:
-            safe_member = html_lib.escape(member)
-            text = f"⚠️ <b>Участник {safe_member}</b>\nИнформация не найдена.\n<i>Выберите действие:</i>"
+            if info:
+                emoji = "✅" if info['desirable'] == "желателен" else "❌"
+                safe_nick = html_lib.escape(info['nick'])
+                text = f"👤 <b>Карточка: {safe_nick}</b>\n🎮 <b>Steam:</b> <code>{info['steam_id']}</code>\n🎖 <b>Роль:</b> {info['role']}\n⚠️ <b>Предупреждения:</b> {info['warns']}\n👏 <b>Похвалы:</b> {info['praises']}\n📊 <b>Рейтинг:</b> {info['score']}\n📌 <b>Статус:</b> {emoji} {info['desirable']}\n<i>Выберите действие:</i>"
+            else:
+                safe_member = html_lib.escape(member)
+                text = f"⚠️ <b>Участник {safe_member}</b>\nИнформация не найдена.\n<i>Выберите действие:</i>"
         else:
             safe_member = html_lib.escape(member)
             text = f"👤 <b>Участник:</b> {safe_member}\n<i>Выберите действие:</i>"
