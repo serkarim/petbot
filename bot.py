@@ -285,7 +285,50 @@ def add_proof_to_complaint(index, proof_text):
     ws = sheet.worksheet("жалобы")
     current = ws.cell(index + 2, 7).value or ""
     ws.update_cell(index + 2, 7, f"{current}\n{proof_text}" if current else proof_text)
+# ---------- ДОБАВИТЬ В БЛОК Google Sheets ----------
 
+def find_member_by_tg_id(tg_id):
+    """Ищет участника по Telegram ID"""
+    ws = sheet.worksheet("участники клана")
+    rows = ws.get_all_values()
+    for row in rows[1:]:
+        if len(row) >= 9 and row[8].strip() == str(tg_id):
+            return row[0]
+    return None
+
+def update_member_tg_data(nickname, tg_username, tg_id):
+    """Обновляет TG данные участника"""
+    ws = sheet.worksheet("участники клана")
+    rows = ws.get_all_values()
+    for idx, row in enumerate(rows[1:], start=2):
+        if row[0].strip() == nickname.strip():
+            ws.update_cell(idx, 8, tg_username)
+            ws.update_cell(idx, 9, str(tg_id))
+            return True
+    return False
+
+def add_new_member(nickname, steam_id, tg_username, tg_id):
+    """Добавляет нового участника в таблицу"""
+    ws = sheet.worksheet("участники клана")
+    rows = ws.get_all_values()
+    for row in rows[1:]:
+        if len(row) >= 2 and row[1].strip() == steam_id.strip():
+            return False
+        if len(row) >= 9 and row[8].strip() == str(tg_id).strip():
+            return False
+    ws.append_row([nickname, steam_id, "новичок", "0", "0", "0", "желателен", tg_username, str(tg_id)])
+    return True
+
+def get_applications(status=None):
+    """Получает заявки на вступление"""
+    try:
+        ws = sheet.worksheet("Заявки на вступление")
+        rows = ws.get_all_values()[1:]
+        if status:
+            return [row for row in rows if len(row) >= 7 and row[6] == status]
+        return [row for row in rows if len(row) >= 7]
+    except:
+        return []
 # =========================
 # 🤖 INIT
 # =========================
@@ -1075,4 +1118,5 @@ async def on_shutdown(_):
 # =========================
 
 if __name__ == "__main__":
+
     executor.start_polling(dp, skip_updates=True, on_startup=on_startup, on_shutdown=on_shutdown)
