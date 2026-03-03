@@ -38,6 +38,58 @@ sheet = client.open_by_key(SPREADSHEET_KEY)
 # =========================
 # 📊 Google Sheets
 # =========================
+def get_member_preds_history(nickname):
+    """Получить историю предупреждений участника"""
+    try:
+        ws = sheet.worksheet("преды")
+        rows = ws.get_all_values()[1:]  # Пропускаем заголовок
+        preds = []
+        for row in rows:
+            if len(row) >= 3 and row[0].strip() == nickname.strip():
+                preds.append(row)
+        return preds[-10:]  # Последние 10
+    except Exception as e:
+        logging.error(f"❌ get_member_preds_history: {e}")
+        return []
+
+def get_member_praises_history(nickname):
+    """Получить историю похвал участника"""
+    try:
+        ws = sheet.worksheet("Похвала")
+        rows = ws.get_all_values()[1:]  # Пропускаем заголовок
+        praises = []
+        for row in rows:
+            if len(row) >= 4 and row[0].strip() == nickname.strip():
+                praises.append(row)
+        return praises[-10:]  # Последние 10
+    except Exception as e:
+        logging.error(f"❌ get_member_praises_history: {e}")
+        return []
+def get_member_preds(nickname):
+    try:
+        ws = sheet.worksheet("преды")
+        rows = ws.get_all_values()[1:]  # Пропускаем заголовок
+        preds = []
+        for row in rows:
+            if len(row) >= 3 and row[0].strip() == nickname.strip():
+                preds.append(row)
+        return preds[-10:]  # Возвращаем последние 10
+    except Exception as e:
+        logging.error(f"❌ get_member_preds: {e}")
+        return []
+
+def get_member_praises(nickname):
+    try:
+        ws = sheet.worksheet("Похвала")
+        rows = ws.get_all_values()[1:]  # Пропускаем заголовок
+        praises = []
+        for row in rows:
+            if len(row) >= 4 and row[0].strip() == nickname.strip():
+                praises.append(row)
+        return praises[-10:]  # Возвращаем последние 10
+    except Exception as e:
+        logging.error(f"❌ get_member_praises: {e}")
+        return []
 def get_clan_members():
     ws = sheet.worksheet("участники клана")
     return [v for v in ws.col_values(1) if v.strip()]
@@ -359,13 +411,25 @@ async def back_menu(callback: types.CallbackQuery):
         logging.error(f"❌ back_menu: {e}")
         await callback.answer("❌ Ошибка", show_alert=True)
 
+
 @dp.message_handler(state='*', commands=['cancel'])
 async def cancel_handler(message: types.Message, state: FSMContext):
     try:
-        if await state.get_state() is None:
+        current_state = await state.get_state()
+        if current_state is None:
             return
+
+        user_id = message.from_user.id
+        existing_nick = find_member_by_tg_id(user_id)
+        apps = get_applications(status="ожидает")
+        has_pending = any(app[4] == str(user_id) for app in apps)
+
         await state.finish()
-        await message.answer("✅ Действие отменено", reply_markup=main_menu(message.from_user.id))
+
+        await message.answer(
+            "✅ Действие отменено",
+            reply_markup=main_menu(user_id, is_registered=(existing_nick is not None), has_pending_app=has_pending)
+        )
     except Exception as e:
         logging.error(f"❌ cancel: {e}")
 
@@ -750,91 +814,210 @@ async def app_status(callback: types.CallbackQuery):
 # =========================
 # 📬 АДМИН-ПАНЕЛЬ ЗАЯВОК
 # =========================
-@dp.callback_query_handler(lambda c: c.data == "applications_menu")
+@dp.callback_query_handler(
+    lambda c: c.data == "applications_menu",
+    state="*"
+)
 async def applications_menu(callback: types.CallbackQuery):
     try:
         if callback.from_user.id not in ADMINS:
             await callback.answer("❌ Только для админов", show_alert=True)
             return
+
         apps = get_applications(status="ожидает")
-        keyboard = InlineKeyboardMarkup()
+
+        keyboard = InlineKeyboardMarkup(row_width=1)
+
         if not apps:
-            keyboard.add(InlineKeyboardButton("📭 Нет заявок", callback_data="none"))
+            keyboard.add(
+                InlineKeyboardButton("📭 Нет заявок", callback_data="none")
+            )
         else:
             for app in apps:
-                keyboard.add(InlineKeyboardButton(f"📬 #{app[0]} | {app[1]}", callback_data=f"app_view_{app[0]}"))
-        keyboard.add(InlineKeyboardButton("🟢 Принятые", callback_data="apps_accepted"), InlineKeyboardButton("🔴 Отклонённые", callback_data="apps_rejected"), InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
-        await callback.message.edit_text(f"📬 Заявки\n🟡 Ожидает: {len(apps)}", reply_markup=keyboard, parse_mode="HTML")
-        await callback.answer()
-    except Exception as e:
-        logging.error(f"❌ applications_menu: {e}")
+                keyboard.add(
+                    InlineKeyboardButton(
+                        f"📬 #{app[0]} | {app[1]}",
+                        callback_data=f"app_view_{app[0]}"
+                    )
+                )
 
-@dp.callback_query_handler(lambda c: c.data.startswith("app_"))
-async def app_actions(callback: types.CallbackQuery):
+        keyboard.add(
+            InlineKeyboardButton("🟢 Принятые", callback_data="apps_accepted"),
+            InlineKeyboardButton("🔴 Отклонённые", callback_data="apps_rejected"),
+            InlineKeyboardButton("🏠 В меню", callback_data="back_menu")
+        )
+
+        await callback.message.edit_text(
+            f"📬 Заявки\n🟡 Ожидает: {len(apps)}",
+            reply_markup=keyboard
+        )
+
+        await callback.answer()
+
+    except Exception as e:
+        logging.error(f"❌ applications_menu: {e}", exc_info=True)
+
+@dp.callback_query_handler(
+    lambda c: c.data.startswith("app_view_"),
+    state="*"
+)
+async def app_view(callback: types.CallbackQuery):
     try:
         if callback.from_user.id not in ADMINS:
             await callback.answer("❌", show_alert=True)
             return
-        parts = callback.data.split("_")
-        action = parts[1] if len(parts) > 1 else ""
-        if action == "view":
-            app_id = parts[2] if len(parts) > 2 else None
-            app = get_application_by_id(app_id) if app_id else None
-            if not app:
-                await callback.answer("❌ Не найдено", show_alert=True)
-                return
-            kb = InlineKeyboardMarkup().add(
-                InlineKeyboardButton("✅ Принять", callback_data=f"app_accept_{app_id}"),
-                InlineKeyboardButton("❌ Отклонить", callback_data=f"app_reject_{app_id}")
-            ).add(InlineKeyboardButton("🔙 Назад", callback_data="applications_menu"))
-            text = f"📬 Заявка #{app['id']}\n🎮 `{app['nick']}`\n🆔 `{app['steam_id']}`\n👤 {app['tg_username']}\n🆔 `{app['tg_id']}`\n🕒 {app['date']}\n🟡 {app['status']}"
-            await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+
+        app_id = callback.data.replace("app_view_", "")
+        app = get_application_by_id(app_id)
+
+        if not app:
+            await callback.answer("❌ Не найдено", show_alert=True)
             return
-        if action == "accept":
-            app_id = parts[2] if len(parts) > 2 else None
-            app = get_application_by_id(app_id) if app_id else None
-            if not app:
-                await callback.answer("❌ Не найдено", show_alert=True)
-                return
-            update_application_status(app_id, "принят")
-            if add_new_member(app['nick'], app['steam_id'], app['tg_username'], app['tg_id']):
-                try:
-                    await bot.send_message(int(app['tg_id']), f"🎉 Заявка принята!\nДобро пожаловать в PET!\n🔗 {GROUP_LINK}", parse_mode="HTML")
-                except:
-                    pass
-                append_log("ЗАЯВКА_ПРИНЯТА", callback.from_user.full_name, callback.from_user.id, app['nick'])
-                await callback.answer("✅ Принято! Участник добавлен", show_alert=True)
-            else:
-                await callback.answer("⚠️ Уже существует", show_alert=True)
-            await applications_menu(callback)
+
+        kb = InlineKeyboardMarkup(row_width=2)
+        kb.add(
+            InlineKeyboardButton("✅ Принять", callback_data=f"app_accept_{app_id}"),
+            InlineKeyboardButton("❌ Отклонить", callback_data=f"app_reject_{app_id}")
+        )
+        kb.add(
+            InlineKeyboardButton("🔙 Назад", callback_data="applications_menu")
+        )
+
+        text = (
+            f"📬 Заявка #{app['id']}\n"
+            f"🎮 <code>{app['nick']}</code>\n"
+            f"🆔 <code>{app['steam_id']}</code>\n"
+            f"👤 {app['tg_username']}\n"
+            f"🆔 <code>{app['tg_id']}</code>\n"
+            f"🕒 {app['date']}\n"
+            f"🟡 {app['status']}"
+        )
+
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+        await callback.answer()
+
+    except Exception as e:
+        logging.error(f"❌ app_view: {e}", exc_info=True)
+@dp.callback_query_handler(
+    lambda c: c.data.startswith("app_accept_"),
+    state="*"
+)
+async def app_accept(callback: types.CallbackQuery):
+    try:
+        if callback.from_user.id not in ADMINS:
+            await callback.answer("❌", show_alert=True)
             return
-        if action == "reject":
-            app_id = parts[2] if len(parts) > 2 else None
-            app = get_application_by_id(app_id) if app_id else None
-            if not app:
-                await callback.answer("❌ Не найдено", show_alert=True)
-                return
-            update_application_status(app_id, "отклонен")
+
+        app_id = callback.data.replace("app_accept_", "")
+        app = get_application_by_id(app_id)
+
+        if not app:
+            await callback.answer("❌ Не найдено", show_alert=True)
+            return
+
+        update_application_status(app_id, "принят")
+
+        if add_new_member(app['nick'], app['steam_id'], app['tg_username'], app['tg_id']):
             try:
-                await bot.send_message(int(app['tg_id']), "❌ Заявка отклонена\nПопробуйте через 7 дней.", parse_mode="HTML")
+                await bot.send_message(
+                    int(app['tg_id']),
+                    f"🎉 Заявка принята!\nДобро пожаловать в PET!\n🔗 {GROUP_LINK}"
+                )
             except:
                 pass
-            append_log("ЗАЯВКА_ОТКЛОНЕНА", callback.from_user.full_name, callback.from_user.id, app['nick'])
-            await callback.answer("❌ Отклонено", show_alert=True)
-            await applications_menu(callback)
-            return
-        if action in ["accepted", "rejected"]:
-            status = "принят" if action == "accepted" else "отклонен"
-            apps = get_applications(status=status)
-            kb = InlineKeyboardMarkup()
-            for app in apps[:10]:
-                kb.add(InlineKeyboardButton(f"#{app[0]} | {app[1]}", callback_data=f"app_view_{app[0]}"))
-            kb.add(InlineKeyboardButton("🔙 Назад", callback_data="applications_menu"))
-            await callback.message.edit_text(f"{'🟢' if action == 'accepted' else '🔴'} {'Принятые' if action == 'accepted' else 'Отклонённые'}\nВсего: {len(apps)}", reply_markup=kb, parse_mode="HTML")
-            return
-        await callback.answer("❌ Неизвестное действие", show_alert=True)
+
+            append_log(
+                "ЗАЯВКА_ПРИНЯТА",
+                callback.from_user.full_name,
+                callback.from_user.id,
+                app['nick']
+            )
+
+            await callback.answer("✅ Принято! Участник добавлен", show_alert=True)
+        else:
+            await callback.answer("⚠️ Уже существует", show_alert=True)
+
+        await applications_menu(callback)
+
     except Exception as e:
-        logging.error(f"❌ app_actions: {e}")
+        logging.error(f"❌ app_accept: {e}", exc_info=True)
+@dp.callback_query_handler(
+    lambda c: c.data.startswith("app_reject_"),
+    state="*"
+)
+async def app_reject(callback: types.CallbackQuery):
+    try:
+        if callback.from_user.id not in ADMINS:
+            await callback.answer("❌", show_alert=True)
+            return
+
+        app_id = callback.data.replace("app_reject_", "")
+        app = get_application_by_id(app_id)
+
+        if not app:
+            await callback.answer("❌ Не найдено", show_alert=True)
+            return
+
+        update_application_status(app_id, "отклонен")
+
+        try:
+            await bot.send_message(
+                int(app['tg_id']),
+                "❌ Заявка отклонена\nПопробуйте через 7 дней."
+            )
+        except:
+            pass
+
+        append_log(
+            "ЗАЯВКА_ОТКЛОНЕНА",
+            callback.from_user.full_name,
+            callback.from_user.id,
+            app['nick']
+        )
+
+        await callback.answer("❌ Отклонено", show_alert=True)
+        await applications_menu(callback)
+
+    except Exception as e:
+        logging.error(f"❌ app_reject: {e}", exc_info=True)
+@dp.callback_query_handler(
+    lambda c: c.data in ["apps_accepted", "apps_rejected"],
+    state="*"
+)
+async def apps_archive(callback: types.CallbackQuery):
+    try:
+        if callback.from_user.id not in ADMINS:
+            await callback.answer("❌", show_alert=True)
+            return
+
+        is_accepted = callback.data == "apps_accepted"
+        status = "принят" if is_accepted else "отклонен"
+
+        apps = get_applications(status=status)
+
+        kb = InlineKeyboardMarkup(row_width=1)
+        for app in apps[:10]:
+            kb.add(
+                InlineKeyboardButton(
+                    f"#{app[0]} | {app[1]}",
+                    callback_data=f"app_view_{app[0]}"
+                )
+            )
+
+        kb.add(
+            InlineKeyboardButton("🔙 Назад", callback_data="applications_menu")
+        )
+
+        await callback.message.edit_text(
+            f"{'🟢 Принятые' if is_accepted else '🔴 Отклонённые'}\n"
+            f"Всего: {len(apps)}",
+            reply_markup=kb
+        )
+
+        await callback.answer()
+
+    except Exception as e:
+        logging.error(f"❌ apps_archive: {e}", exc_info=True)
 
 # =========================
 # 👤 ПРОФИЛЬ
@@ -854,11 +1037,80 @@ async def my_profile(callback: types.CallbackQuery):
         status_emoji = "✅" if info['desirable'] == "желателен" else "❌"
         safe_nick = html_lib.escape(info['nick'])
         text = f"👤 Ваш профиль\n🎮 {safe_nick}\n🆔 `{info['steam_id']}`\n🎖 {info['role']}\n⚠️ {info['warns']}\n👏 {info['praises']}\n📊 {info['score']}\n📌 {status_emoji} {info['desirable']}\n🆔 `{user_id}`"
-        await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu")), parse_mode="HTML")
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(InlineKeyboardButton("📜 Мои преды ", callback_data="view_preds "))
+        keyboard.add(InlineKeyboardButton("👏 Мои похвалы ", callback_data="view_praises "))
+        keyboard.add(InlineKeyboardButton("🏠 В меню ", callback_data="back_menu "))
+
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML ")
         await callback.answer()
     except Exception as e:
         logging.error(f"❌ my_profile: {e}")
 
+
+@dp.callback_query_handler(lambda c: c.data == "view_preds")
+async def view_preds(callback: types.CallbackQuery):
+    try:
+        user_id = callback.from_user.id
+        existing_nick = find_member_by_tg_id(user_id)
+        if not existing_nick:
+            await callback.answer("❌ Вы не зарегистрированы", show_alert=True)
+            return
+
+        preds = get_member_preds(existing_nick)
+        safe_nick = html_lib.escape(existing_nick)
+
+        if not preds:
+            text = f"📜 История предупреждений: {safe_nick}\n📭 Записей не найдено."
+        else:
+            text = f"📜 История предупреждений: {safe_nick}\n\n"
+            for row in preds:
+                # row: [member, reason, date]
+                reason = html_lib.escape(row[1] if len(row) > 1 else "Без причины")
+                date = html_lib.escape(row[2] if len(row) > 2 else "?")
+                text += f"📅 {date} | ⚠️ {reason}\n"
+
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(InlineKeyboardButton("🔙 Назад", callback_data="my_profile"))
+
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"❌ view_preds: {e}")
+        await callback.answer("❌ Ошибка", show_alert=True)
+
+
+@dp.callback_query_handler(lambda c: c.data == "view_praises")
+async def view_praises(callback: types.CallbackQuery):
+    try:
+        user_id = callback.from_user.id
+        existing_nick = find_member_by_tg_id(user_id)
+        if not existing_nick:
+            await callback.answer("❌ Вы не зарегистрированы", show_alert=True)
+            return
+
+        praises = get_member_praises(existing_nick)
+        safe_nick = html_lib.escape(existing_nick)
+
+        if not praises:
+            text = f"👏 История похвал: {safe_nick}\n📭 Записей не найдено."
+        else:
+            text = f"👏 История похвал: {safe_nick}\n\n"
+            for row in praises:
+                # row: [member, from_user, reason, date]
+                from_user = html_lib.escape(row[1] if len(row) > 1 else "Аноним")
+                reason = html_lib.escape(row[2] if len(row) > 2 else "Без причины")
+                date = html_lib.escape(row[3] if len(row) > 3 else "?")
+                text += f"📅 {date} | 👤 {from_user} | 👏 {reason}\n"
+
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(InlineKeyboardButton("🔙 Назад", callback_data="my_profile"))
+
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"❌ view_praises: {e}")
+        await callback.answer("❌ Ошибка", show_alert=True)
 # =========================
 # 📋 КЛАН
 # =========================
@@ -875,6 +1127,7 @@ async def clan_list(callback: types.CallbackQuery):
     except Exception as e:
         logging.error(f"❌ clan_list: {e}")
 
+
 @dp.callback_query_handler(lambda c: c.data.startswith("member_"))
 async def member_selected(callback: types.CallbackQuery, state: FSMContext):
     try:
@@ -882,25 +1135,99 @@ async def member_selected(callback: types.CallbackQuery, state: FSMContext):
         await state.update_data(member=member)
         is_admin = callback.from_user.id in ADMINS
         info = get_member_info(member) if is_admin else None
+
         kb = InlineKeyboardMarkup()
+
+        # Кнопки только для админов
         if is_admin:
+            kb.add(
+                InlineKeyboardButton("📜 История предов", callback_data=f"view_member_preds_{member[:40]}"),
+                InlineKeyboardButton("👏 История похвал", callback_data=f"view_member_praises_{member[:40]}")
+            )
             kb.add(InlineKeyboardButton("⚠ Пред", callback_data="action_pred"))
-            if info:
-                emoji = "✅" if info['desirable'] == "желателен" else "❌"
-                safe_nick = html_lib.escape(info['nick'])
-                text = f"👤 Карточка: {safe_nick}\n🎮 Steam: `{info['steam_id']}`\n🎖 Роль: {info['role']}\n⚠️ Предупреждения: {info['warns']}\n👏 Похвалы: {info['praises']}\n📊 Рейтинг: {info['score']}\n📌 Статус: {emoji} {info['desirable']}\nВыберите действие:"
-            else:
-                safe_member = html_lib.escape(member)
-                text = f"⚠️ Участник {safe_member}\nИнформация не найдена.\nВыберите действие:"
+
+        if info:
+            emoji = "✅ " if info['desirable'] == "желателен" else "❌ "
+            safe_nick = html_lib.escape(info['nick'])
+            text = f"👤 Карточка: {safe_nick}\n🎮 Steam: `{info['steam_id']}`\n🎖 Роль: {info['role']}\n⚠️ Предупреждения: {info['warns']}\n👏 Похвалы: {info['praises']}\n📊 Рейтинг: {info['score']}\n📌 Статус: {emoji}{info['desirable']}\nВыберите действие:"
         else:
             safe_member = html_lib.escape(member)
-            text = f"👤 Участник: {safe_member}\nВыберите действие:"
-        kb.add(InlineKeyboardButton("👏 Похвала", callback_data="action_praise"), InlineKeyboardButton("⚖ Жалоба", callback_data="action_complaint"), InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
+            text = f"⚠️ Участник {safe_member}\nИнформация не найдена.\nВыберите действие:"
+
+        # Общие кнопки
+        kb.add(
+            InlineKeyboardButton("👏 Похвала", callback_data="action_praise"),
+            InlineKeyboardButton("⚖ Жалоба", callback_data="action_complaint"),
+            InlineKeyboardButton("🏠 В меню", callback_data="back_menu")
+        )
+
         await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
         await callback.answer()
     except Exception as e:
         logging.error(f"❌ member_selected: {e}")
 
+
+@dp.callback_query_handler(lambda c: c.data.startswith("view_member_preds_"))
+async def view_member_preds(callback: types.CallbackQuery):
+    try:
+        if callback.from_user.id not in ADMINS:
+            await callback.answer("❌ Только для админов", show_alert=True)
+            return
+
+        member = callback.data.replace("view_member_preds_", "", 1)
+        preds = get_member_preds_history(member)
+        safe_member = html_lib.escape(member)
+
+        if not preds:
+            text = f"📜 История предупреждений: {safe_member}\n📭 Записей не найдено."
+        else:
+            text = f"📜 История предупреждений: {safe_member}\n\n"
+            for row in preds:
+                reason = html_lib.escape(row[1] if len(row) > 1 else "Без причины")
+                date = html_lib.escape(row[2] if len(row) > 2 else "?")
+                text += f"📅 {date} | ⚠️ {reason}\n"
+
+        kb = InlineKeyboardMarkup().add(
+            InlineKeyboardButton("🔙 Назад", callback_data=f"member_{member[:40]}")
+        )
+
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"❌ view_member_preds: {e}")
+        await callback.answer("❌ Ошибка", show_alert=True)
+
+
+@dp.callback_query_handler(lambda c: c.data.startswith("view_member_praises_"))
+async def view_member_praises(callback: types.CallbackQuery):
+    try:
+        if callback.from_user.id not in ADMINS:
+            await callback.answer("❌ Только для админов", show_alert=True)
+            return
+
+        member = callback.data.replace("view_member_praises_", "", 1)
+        praises = get_member_praises_history(member)
+        safe_member = html_lib.escape(member)
+
+        if not praises:
+            text = f"👏 История похвал: {safe_member}\n📭 Записей не найдено."
+        else:
+            text = f"👏 История похвал: {safe_member}\n\n"
+            for row in praises:
+                from_user = html_lib.escape(row[1] if len(row) > 1 else "Аноним")
+                reason = html_lib.escape(row[2] if len(row) > 2 else "Без причины")
+                date = html_lib.escape(row[3] if len(row) > 3 else "?")
+                text += f"📅 {date} | 👤 {from_user} | 👏 {reason}\n"
+
+        kb = InlineKeyboardMarkup().add(
+            InlineKeyboardButton("🔙 Назад", callback_data=f"member_{member[:40]}")
+        )
+
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"❌ view_member_praises: {e}")
+        await callback.answer("❌ Ошибка", show_alert=True)
 @dp.callback_query_handler(lambda c: c.data.startswith("action_"))
 async def action_selected(callback: types.CallbackQuery, state: FSMContext):
     try:
