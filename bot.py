@@ -393,82 +393,167 @@ async def apply_start(callback: types.CallbackQuery, state: FSMContext):
         logging.error(f"❌ apply_start: {e}")
         await callback.answer("❌ Ошибка", show_alert=True)
 
-@dp.callback_query_handler(lambda c: c.data == "reg_type_new")
+@dp.callback_query_handler(
+    lambda c: c.data == "reg_type_new",
+    state="*"
+)
 async def reg_type_new(callback: types.CallbackQuery, state: FSMContext):
     try:
         await ActionState.reg_rules.set()
-        keyboard = InlineKeyboardMarkup()
+
+        keyboard = InlineKeyboardMarkup(row_width=1)
         keyboard.add(
             InlineKeyboardButton("✅ Согласен с правилами", callback_data="rules_accept"),
             InlineKeyboardButton("❌ Отмена", callback_data="apply_start")
         )
-        await callback.message.edit_text("📜 Правила клана PET\n1️⃣ Уважение ко всем участникам\n2️⃣ Запрет на читы\n3️⃣ Активность в клане\n4️⃣ Выполнение приказов\n5️⃣ Конфиденциальность\n⚠️ Нарушение = предупреждение или кик!\nСогласны?", reply_markup=keyboard, parse_mode="HTML")
-        await callback.answer()
-    except Exception as e:
-        logging.error(f"❌ reg_type_new: {e}")
-        await callback.answer("❌ Ошибка", show_alert=True)
 
-@dp.callback_query_handler(lambda c: c.data == "rules_accept")
+        await callback.message.edit_text(
+            "📜 Правила клана PET\n"
+            "1️⃣ Уважение ко всем участникам\n"
+            "2️⃣ Запрет на читы\n"
+            "3️⃣ Активность в клане\n"
+            "4️⃣ Выполнение приказов\n"
+            "5️⃣ Конфиденциальность\n\n"
+            "⚠️ Нарушение = предупреждение или кик!\n"
+            "Согласны?",
+            reply_markup=keyboard
+        )
+
+        await callback.answer()
+
+    except Exception as e:
+        logging.error(f"❌ reg_type_new: {e}", exc_info=True)
+        await callback.answer("❌ Ошибка", show_alert=True)
+@dp.callback_query_handler(
+    lambda c: c.data == "rules_accept",
+    state=ActionState.reg_rules
+)
 async def rules_accepted(callback: types.CallbackQuery, state: FSMContext):
     try:
         await ActionState.reg_steam_nick.set()
-        await callback.message.edit_text("🆕 Введите ваш никнейм в Steam (как в игре):\nПример: [PET] КИРЮХА", parse_mode="HTML")
+
+        await callback.message.edit_text(
+            "🆕 Введите ваш никнейм в Steam (как в игре):\n"
+            "Пример: [PET] КИРЮХА"
+        )
+
         await callback.answer()
+
     except Exception as e:
-        logging.error(f"❌ rules_accepted: {e}")
+        logging.error(f"❌ rules_accepted: {e}", exc_info=True)
+        await callback.answer("❌ Ошибка", show_alert=True)
 
 @dp.message_handler(state=ActionState.reg_steam_nick)
 async def reg_save_steam_nick(message: types.Message, state: FSMContext):
     try:
-        await state.update_data(steam_nick=message.text.strip())
+        steam_nick = message.text.strip()
+
+        if len(steam_nick) < 2:
+            await message.answer("❌ Ник слишком короткий. Введите корректный Steam ник:")
+            return
+
+        await state.update_data(steam_nick=steam_nick)
         await ActionState.reg_steam_id.set()
-        await message.answer("🎮 Введите Steam ID (64-bit):\nПример: 76561198984240881\nКак узнать: https://steamid.io/", parse_mode="HTML")
+
+        await message.answer(
+            "🎮 Введите Steam ID (64-bit):\n"
+            "Пример: 76561198984240881\n"
+            "Как узнать: https://steamid.io/"
+        )
+
     except Exception as e:
-        logging.error(f"❌ reg_save_steam_nick: {e}")
+        logging.error(f"❌ reg_save_steam_nick: {e}", exc_info=True)
 
 @dp.message_handler(state=ActionState.reg_steam_id)
 async def reg_save_steam_id(message: types.Message, state: FSMContext):
     try:
         steam_id = message.text.strip()
+
         if not steam_id.isdigit() or len(steam_id) < 17:
             await message.answer("❌ Неверный формат Steam ID. Попробуйте ещё раз:")
             return
+
         await state.update_data(steam_id=steam_id)
         await ActionState.reg_confirm.set()
+
         data = await state.get_data()
-        keyboard = InlineKeyboardMarkup()
+
+        keyboard = InlineKeyboardMarkup(row_width=1)
         keyboard.add(
             InlineKeyboardButton("✅ Подтвердить заявку", callback_data="app_submit"),
             InlineKeyboardButton("❌ Изменить", callback_data="reg_type_new")
         )
-        await message.answer(f"📋 Проверьте данные:\n🎮 Ник: `{data['steam_nick']}`\n🆔 Steam ID: `{steam_id}`\n👤 TG: `{message.from_user.full_name}`\nВсё верно?", reply_markup=keyboard, parse_mode="HTML")
-    except Exception as e:
-        logging.error(f"❌ reg_save_steam_id: {e}")
 
-@dp.callback_query_handler(lambda c: c.data == "app_submit")
+        await message.answer(
+            f"📋 Проверьте данные:\n"
+            f"🎮 Ник: <code>{data['steam_nick']}</code>\n"
+            f"🆔 Steam ID: <code>{steam_id}</code>\n"
+            f"👤 TG: <code>{message.from_user.full_name}</code>\n\n"
+            f"Всё верно?",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+
+    except Exception as e:
+        logging.error(f"❌ reg_save_steam_id: {e}", exc_info=True)
+
+@dp.callback_query_handler(
+    lambda c: c.data == "app_submit",
+    state=ActionState.reg_confirm
+)
 async def app_submit(callback: types.CallbackQuery, state: FSMContext):
     try:
         data = await state.get_data()
-        steam_nick, steam_id, tg_username, tg_id = data.get("steam_nick"), data.get("steam_id"), data.get("tg_username"), data.get("tg_id")
+
+        steam_nick = data.get("steam_nick")
+        steam_id = data.get("steam_id")
+        tg_username = data.get("tg_username")
+        tg_id = data.get("tg_id")
+
         if not all([steam_nick, steam_id, tg_id]):
             await callback.answer("❌ Ошибка данных", show_alert=True)
             return
+
         app_id = add_application(steam_nick, steam_id, tg_username, tg_id)
         append_log("ЗАЯВКА_НА_ВСТУПЛЕНИЕ", tg_username, tg_id, steam_nick)
+
         await state.finish()
+
         for admin_id in ADMINS:
             try:
-                kb = InlineKeyboardMarkup().add(
+                kb = InlineKeyboardMarkup(row_width=2)
+                kb.add(
                     InlineKeyboardButton("✅ Принять", callback_data=f"app_accept_{app_id}"),
                     InlineKeyboardButton("❌ Отклонить", callback_data=f"app_reject_{app_id}")
                 )
-                await bot.send_message(admin_id, f"📬 Новая заявка!\n🆔 #{app_id}\n🎮 `{steam_nick}`\n🆔 `{steam_id}`\n👤 {tg_username}\n🆔 `{tg_id}`\n🕒 {datetime.now().strftime('%d.%m.%Y %H:%M')}", reply_markup=kb, parse_mode="HTML")
+
+                await bot.send_message(
+                    admin_id,
+                    f"📬 Новая заявка!\n"
+                    f"🆔 #{app_id}\n"
+                    f"🎮 <code>{steam_nick}</code>\n"
+                    f"🆔 <code>{steam_id}</code>\n"
+                    f"👤 {tg_username}\n"
+                    f"🆔 <code>{tg_id}</code>",
+                    reply_markup=kb,
+                    parse_mode="HTML"
+                )
+
             except Exception as e:
                 logging.error(f"❌ Ошибка уведомления админа: {e}")
-        await callback.message.edit_text(f"✅ Заявка отправлена!\n📋 ID: `#{app_id}`\nОжидайте решения модераторов!", reply_markup=main_menu(tg_id, has_pending_app=True), parse_mode="HTML")
+
+        await callback.message.edit_text(
+            f"✅ Заявка отправлена!\n"
+            f"📋 ID: <code>#{app_id}</code>\n"
+            f"Ожидайте решения модераторов!",
+            reply_markup=main_menu(tg_id, has_pending_app=True),
+            parse_mode="HTML"
+        )
+
         await callback.answer()
+
     except Exception as e:
-        logging.error(f"❌ app_submit: {e}")
+        logging.error(f"❌ app_submit: {e}", exc_info=True)
         await callback.answer("❌ Ошибка отправки", show_alert=True)
 
 @dp.callback_query_handler(lambda c: c.data == "reg_type_existing", state="*")
