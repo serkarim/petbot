@@ -587,30 +587,56 @@ async def reg_select_existing(callback: types.CallbackQuery, state: FSMContext):
         logging.error(f"❌ reg_select_existing: {e}", exc_info=True)
         await callback.answer("❌ Ошибка при выборе ника", show_alert=True)
 
-@dp.callback_query_handler(lambda c: c.data == "reg_existing_yes")
+@dp.callback_query_handler(
+    lambda c: c.data == "reg_existing_yes",
+    state=ActionState.reg_existing_confirm
+)
 async def reg_existing_confirm(callback: types.CallbackQuery, state: FSMContext):
     try:
         data = await state.get_data()
-        nickname, tg_username, tg_id = data.get("selected_nick"), data.get("tg_username"), data.get("tg_id")
+
+        nickname = data.get("selected_nick")
+        tg_username = data.get("tg_username")
+        tg_id = data.get("tg_id")
+
         if not nickname:
             await callback.answer("❌ Ошибка: ник не выбран", show_alert=True)
             return
+
         existing = find_member_by_tg_id(tg_id)
         if existing:
             safe_existing = html_lib.escape(existing)
-            await callback.message.edit_text(f"⚠️ Ваш TG уже привязан!\nВы зарегистрированы как: {safe_existing}", reply_markup=main_menu(tg_id, is_registered=True), parse_mode="HTML")
+            await callback.message.edit_text(
+                f"⚠️ Ваш TG уже привязан!\n"
+                f"Вы зарегистрированы как: {safe_existing}",
+                reply_markup=main_menu(tg_id, is_registered=True),
+                parse_mode="HTML"
+            )
             await state.finish()
+            await callback.answer()
             return
+
         if update_member_tg_data(nickname, tg_username, tg_id):
             append_log("РЕГИСТРАЦИЯ_УЧАСТНИК", tg_username, tg_id, nickname)
-            await state.finish()
+
             safe_nick = html_lib.escape(nickname)
-            await callback.message.edit_text(f"✅ Регистрация завершена!\nВы привязаны к: {safe_nick}\nТеперь доступны все функции!", reply_markup=main_menu(tg_id, is_registered=True), parse_mode="HTML")
+
+            await callback.message.edit_text(
+                f"✅ Регистрация завершена!\n"
+                f"Вы привязаны к: {safe_nick}\n"
+                f"Теперь доступны все функции!",
+                reply_markup=main_menu(tg_id, is_registered=True),
+                parse_mode="HTML"
+            )
+
+            await state.finish()
         else:
             await callback.answer("❌ Ошибка обновления данных", show_alert=True)
+
         await callback.answer()
+
     except Exception as e:
-        logging.error(f"❌ reg_existing_confirm: {e}")
+        logging.error(f"❌ reg_existing_confirm: {e}", exc_info=True)
         await callback.answer("❌ Внутренняя ошибка регистрации", show_alert=True)
 
 @dp.callback_query_handler(lambda c: c.data == "app_status")
