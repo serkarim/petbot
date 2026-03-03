@@ -1042,7 +1042,7 @@ async def my_profile(callback: types.CallbackQuery):
         keyboard.add(InlineKeyboardButton("👏 Мои похвалы ", callback_data="view_praises "))
         keyboard.add(InlineKeyboardButton("🏠 В меню ", callback_data="back_menu "))
 
-        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML ")
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
         await callback.answer()
     except Exception as e:
         logging.error(f"❌ my_profile: {e}")
@@ -1167,66 +1167,66 @@ async def member_selected(callback: types.CallbackQuery, state: FSMContext):
         logging.error(f"❌ member_selected: {e}")
 
 
-@dp.callback_query_handler(lambda c: c.data.startswith("view_member_preds_"))
-async def view_member_preds(callback: types.CallbackQuery):
+@dp.callback_query_handler(lambda c: c.data == "view_preds")
+async def view_preds(callback: types.CallbackQuery):
     try:
-        if callback.from_user.id not in ADMINS:
-            await callback.answer("❌ Только для админов", show_alert=True)
+        user_id = callback.from_user.id
+        existing_nick = find_member_by_tg_id(user_id)
+        if not existing_nick:
+            await callback.answer("❌ Вы не зарегистрированы", show_alert=True)
             return
 
-        member = callback.data.replace("view_member_preds_", "", 1)
-        preds = get_member_preds_history(member)
-        safe_member = html_lib.escape(member)
+        preds = get_member_preds_history(existing_nick)
+        safe_nick = html_lib.escape(existing_nick)
 
         if not preds:
-            text = f"📜 История предупреждений: {safe_member}\n📭 Записей не найдено."
+            text = f"📜 История предупреждений: {safe_nick}\n📭 Записей не найдено."
         else:
-            text = f"📜 История предупреждений: {safe_member}\n\n"
+            text = f"📜 История предупреждений: {safe_nick}\n\n"
             for row in preds:
                 reason = html_lib.escape(row[1] if len(row) > 1 else "Без причины")
                 date = html_lib.escape(row[2] if len(row) > 2 else "?")
                 text += f"📅 {date} | ⚠️ {reason}\n"
 
-        kb = InlineKeyboardMarkup().add(
-            InlineKeyboardButton("🔙 Назад", callback_data=f"member_{member[:40]}")
-        )
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(InlineKeyboardButton("🔙 Назад", callback_data="my_profile"))
 
-        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
         await callback.answer()
     except Exception as e:
-        logging.error(f"❌ view_member_preds: {e}")
+        logging.error(f"❌ view_preds: {e}")
         await callback.answer("❌ Ошибка", show_alert=True)
 
 
-@dp.callback_query_handler(lambda c: c.data.startswith("view_member_praises_"))
-async def view_member_praises(callback: types.CallbackQuery):
+@dp.callback_query_handler(lambda c: c.data == "view_praises")
+async def view_praises(callback: types.CallbackQuery):
     try:
-        if callback.from_user.id not in ADMINS:
-            await callback.answer("❌ Только для админов", show_alert=True)
+        user_id = callback.from_user.id
+        existing_nick = find_member_by_tg_id(user_id)
+        if not existing_nick:
+            await callback.answer("❌ Вы не зарегистрированы", show_alert=True)
             return
 
-        member = callback.data.replace("view_member_praises_", "", 1)
-        praises = get_member_praises_history(member)
-        safe_member = html_lib.escape(member)
+        praises = get_member_praises_history(existing_nick)
+        safe_nick = html_lib.escape(existing_nick)
 
         if not praises:
-            text = f"👏 История похвал: {safe_member}\n📭 Записей не найдено."
+            text = f"👏 История похвал: {safe_nick}\n📭 Записей не найдено."
         else:
-            text = f"👏 История похвал: {safe_member}\n\n"
+            text = f"👏 История похвал: {safe_nick}\n\n"
             for row in praises:
                 from_user = html_lib.escape(row[1] if len(row) > 1 else "Аноним")
                 reason = html_lib.escape(row[2] if len(row) > 2 else "Без причины")
                 date = html_lib.escape(row[3] if len(row) > 3 else "?")
                 text += f"📅 {date} | 👤 {from_user} | 👏 {reason}\n"
 
-        kb = InlineKeyboardMarkup().add(
-            InlineKeyboardButton("🔙 Назад", callback_data=f"member_{member[:40]}")
-        )
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(InlineKeyboardButton("🔙 Назад", callback_data="my_profile"))
 
-        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
         await callback.answer()
     except Exception as e:
-        logging.error(f"❌ view_member_praises: {e}")
+        logging.error(f"❌ view_praises: {e}")
         await callback.answer("❌ Ошибка", show_alert=True)
 @dp.callback_query_handler(lambda c: c.data.startswith("action_"))
 async def action_selected(callback: types.CallbackQuery, state: FSMContext):
@@ -1690,7 +1690,7 @@ async def complaint_actions(callback: types.CallbackQuery):
         logging.error(f"❌ complaint_actions: {e}")
 
 # =========================
-# ⏰ ПЛАНИРОВЩИК
+# ⏰ ПЛАНИРОВЩИК 123
 # =========================
 scheduler = AsyncIOScheduler(timezone=pytz.timezone("Europe/Moscow"))
 
