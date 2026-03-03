@@ -471,72 +471,118 @@ async def app_submit(callback: types.CallbackQuery, state: FSMContext):
         logging.error(f"❌ app_submit: {e}")
         await callback.answer("❌ Ошибка отправки", show_alert=True)
 
-@dp.callback_query_handler(lambda c: c.data == "reg_type_existing")
+@dp.callback_query_handler(lambda c: c.data == "reg_type_existing", state="*")
 async def reg_type_existing(callback: types.CallbackQuery, state: FSMContext):
     try:
         await ActionState.reg_select_existing.set()
+
         ws = sheet.worksheet("участники клана")
         rows = ws.get_all_values()[1:]
+
         unregistered = []
         for row in rows:
             if len(row) >= 1 and row[0].strip():
                 tg_id_in_table = row[8].strip() if len(row) > 8 else ""
                 if not tg_id_in_table:
                     unregistered.append(row[0].strip())
+
         if not unregistered:
-            await callback.message.edit_text("✅ Все участники уже зарегистрированы!", reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 Назад", callback_data="apply_start")), parse_mode="HTML")
+            keyboard = InlineKeyboardMarkup().add(
+                InlineKeyboardButton("🔙 Назад", callback_data="apply_start")
+            )
+            await callback.message.edit_text(
+                "✅ Все участники уже зарегистрированы!",
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
             await callback.answer()
             return
+
         await state.update_data(unregistered_list=unregistered)
+
         keyboard = InlineKeyboardMarkup(row_width=2)
         for idx, nick in enumerate(unregistered[:30]):
-            keyboard.add(InlineKeyboardButton(nick, callback_data=f"reg_sel_{idx}"))
-        keyboard.add(InlineKeyboardButton("🔙 Назад", callback_data="apply_start"))
-        await callback.message.edit_text(f"👤 Выберите ваш никнейм\nНайдено {len(unregistered)} участников без регистрации:", reply_markup=keyboard, parse_mode="HTML")
+            keyboard.insert(
+                InlineKeyboardButton(nick, callback_data=f"reg_sel_{idx}")
+            )
+
+        keyboard.add(
+            InlineKeyboardButton("🔙 Назад", callback_data="apply_start")
+        )
+
+        await callback.message.edit_text(
+            f"👤 Выберите ваш никнейм\n"
+            f"Найдено {len(unregistered)} участников без регистрации:",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+
         await callback.answer()
+
     except Exception as e:
-        logging.error(f"❌ reg_type_existing: {e}")
+        logging.error(f"❌ reg_type_existing: {e}", exc_info=True)
         await callback.answer("❌ Ошибка загрузки списка", show_alert=True)
 
-@dp.callback_query_handler(lambda c: c.data.startswith("reg_sel_"))
+
+@dp.callback_query_handler(
+    lambda c: c.data.startswith("reg_sel_"),
+    state=ActionState.reg_select_existing
+)
 async def reg_select_existing(callback: types.CallbackQuery, state: FSMContext):
     try:
+        logging.info(f"🔥 CALLBACK RECEIVED: {callback.data}")
+
         idx_str = callback.data.replace("reg_sel_", "", 1).strip()
-        logging.info(f"🔍 callback: {callback.data} | idx_str: {idx_str}")
-        if not idx_str or not idx_str.isdigit():
-            logging.error(f"❌ Неверный индекс: {idx_str}")
+
+        if not idx_str.isdigit():
             await callback.answer("❌ Ошибка индекса", show_alert=True)
             return
+
         idx = int(idx_str)
+
         data = await state.get_data()
         unregistered = data.get("unregistered_list", [])
+
+        # Если вдруг список потерялся — перезагружаем
         if not unregistered:
-            logging.warning("⚠️ Список пуст, загружаем заново")
             ws = sheet.worksheet("участники клана")
             rows = ws.get_all_values()[1:]
-            unregistered = []
+
             for row in rows:
                 if len(row) >= 1 and row[0].strip():
                     tg_id_in_table = row[8].strip() if len(row) > 8 else ""
                     if not tg_id_in_table:
                         unregistered.append(row[0].strip())
+
             await state.update_data(unregistered_list=unregistered)
+
         if idx >= len(unregistered):
-            logging.error(f"❌ Индекс {idx} вне диапазона")
             await callback.answer("❌ Ник не найден", show_alert=True)
             return
+
         nickname = unregistered[idx]
-        logging.info(f"✅ Выбран ник: {nickname}")
         await state.update_data(selected_nick=nickname)
+
         await ActionState.reg_existing_confirm.set()
-        keyboard = InlineKeyboardMarkup()
+
+        keyboard = InlineKeyboardMarkup(row_width=2)
         keyboard.add(
             InlineKeyboardButton("✅ Да, это я!", callback_data="reg_existing_yes"),
             InlineKeyboardButton("❌ Нет, другой", callback_data="reg_type_existing")
         )
+
         safe_nickname = html_lib.escape(nickname)
-        await callback.message.edit_text(f"🔍 Подтверждение\nВы выбираете: {safe_nickname}\nЭто правильный ник?", reply_markup=keyboard, parse_mode="HTML")
+
+        await callback.message.edit_text(
+            f"🔍 Подтверждение\n"
+            f"Вы выбираете: <b>{safe_nickname}</b>\n"
+            f"Это правильный ник?",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+
         await callback.answer()
+
     except Exception as e:
         logging.error(f"❌ reg_select_existing: {e}", exc_info=True)
         await callback.answer("❌ Ошибка при выборе ника", show_alert=True)
