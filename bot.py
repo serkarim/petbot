@@ -479,6 +479,7 @@ async def reg_type_new(callback: types.CallbackQuery, state: FSMContext):
             "4️⃣ Выполнение приказов\n"
             "5️⃣ Конфиденциальность\n\n"
             "⚠️ Нарушение = предупреждение или кик!\n"
+            "Полный список правил: https://telegra.ph/Pravila-klana-03-01-3 Просьба внимательно ознакомиться! Дабы потом не задавть лищние вопросы\n"
             "Согласны?",
             reply_markup=keyboard
         )
@@ -1038,9 +1039,9 @@ async def my_profile(callback: types.CallbackQuery):
         safe_nick = html_lib.escape(info['nick'])
         text = f"👤 Ваш профиль\n🎮 {safe_nick}\n🆔 `{info['steam_id']}`\n🎖 {info['role']}\n⚠️ {info['warns']}\n👏 {info['praises']}\n📊 {info['score']}\n📌 {status_emoji} {info['desirable']}\n🆔 `{user_id}`"
         keyboard = InlineKeyboardMarkup()
-        keyboard.add(InlineKeyboardButton("📜 Мои преды ", callback_data="view_preds "))
-        keyboard.add(InlineKeyboardButton("👏 Мои похвалы ", callback_data="view_praises "))
-        keyboard.add(InlineKeyboardButton("🏠 В меню ", callback_data="back_menu "))
+        keyboard.add(InlineKeyboardButton("📜 Мои преды ", callback_data="view_preds"))
+        keyboard.add(InlineKeyboardButton("👏 Мои похвалы ", callback_data="view_praises"))
+        keyboard.add(InlineKeyboardButton("🏠 В меню ", callback_data="back_menu"))
 
         await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
         await callback.answer()
