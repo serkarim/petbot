@@ -1255,15 +1255,28 @@ async def process_reason(message: types.Message, state: FSMContext):
                 return
             append_pred(member, message.text)
             append_log("ПРЕД", username, user_id, member)
-            await message.answer("⚠ Пред записан ✅", reply_markup=main_menu(user_id))
+            user_id = message.from_user.id
+            existing_nick = find_member_by_tg_id(user_id)
+            apps = get_applications(status="ожидает")
+            has_pending = any(app[4] == str(user_id) for app in apps)
+            await message.answer("⚠ Пред записан ✅", reply_markup=main_menu(user_id, is_registered=(existing_nick is not None), has_pending_app=has_pending))
         elif action == "praise":
             append_praise(member, username, message.text)
+            user_id = message.from_user.id
+            existing_nick = find_member_by_tg_id(user_id)
+            apps = get_applications(status="ожидает")
+            has_pending = any(app[4] == str(user_id) for app in apps)
             append_log("ПОХВАЛА", username, user_id, member)
-            await message.answer("👏 Похвала записана ✅", reply_markup=main_menu(user_id))
+            await message.answer("👏 Похвала записана ✅",             reply_markup=main_menu(user_id, is_registered=(existing_nick is not None), has_pending_app=has_pending)
+)
         elif action == "complaint":
             add_complaint(username, user_id, member, message.text)
             append_log("ЖАЛОБА", username, user_id, member)
-            await message.answer("⚖ Жалоба отправлена ✅", reply_markup=main_menu(user_id))
+            user_id = message.from_user.id
+            existing_nick = find_member_by_tg_id(user_id)
+            apps = get_applications(status="ожидает")
+            has_pending = any(app[4] == str(user_id) for app in apps)
+            await message.answer("⚖ Жалоба отправлена ✅", reply_markup=main_menu(user_id, is_registered=(existing_nick is not None), has_pending_app=has_pending))
             await state.finish()
     except Exception as e:
         logging.error(f"❌ process_reason: {e}")
