@@ -153,7 +153,7 @@ def add_application(nickname, steam_id, tg_username, tg_id):
     ws = get_applications_sheet()
     rows = ws.get_all_values()
     new_id = str(max([int(r[0]) for r in rows[1:] if r[0].isdigit()], default=0) + 1)
-    date = datetime.now().strftime("%d.%m.%Y %H:%M")
+    date = datetime.now(pytz.timezone("Europe/Moscow")).strftime("%d.%m.%Y %H:%M")
     ws.append_row([new_id, nickname, steam_id, tg_username, str(tg_id), date, "ожидает"])
     return new_id
 
@@ -187,15 +187,15 @@ def get_application_by_id(app_id):
 
 def append_pred(member, reason):
     ws = sheet.worksheet("преды")
-    ws.append_row([member, reason, datetime.now().strftime("%d.%m.%Y")])
+    ws.append_row([member, reason, datetime.now(pytz.timezone("Europe/Moscow")).strftime("%d.%m.%Y")])
 
 def append_praise(member, from_user, reason):
     ws = sheet.worksheet("Похвала")
-    ws.append_row([member, from_user, reason, datetime.now().strftime("%d.%m.%Y")])
+    ws.append_row([member, from_user, reason, datetime.now(pytz.timezone("Europe/Moscow")).strftime("%d.%m.%Y")])
 
 def append_log(action, username, user_id, to_member):
     ws = sheet.worksheet("логи")
-    ws.append_row([action, username, user_id, to_member, datetime.now().strftime("%d.%m.%Y %H:%M")])
+    ws.append_row([action, username, user_id, to_member, datetime.now(pytz.timezone("Europe/Moscow")).strftime("%d.%m.%Y %H:%M")])
 
 def get_logs():
     return sheet.worksheet("логи").get_all_values()
@@ -239,7 +239,7 @@ def get_top_praises(weeks=None):
                 if not date_str:
                     continue
                 date = datetime.strptime(date_str, "%d.%m.%Y")
-                if date < datetime.now() - timedelta(weeks=weeks):
+                if date < datetime.now(pytz.timezone("Europe/Moscow")) - timedelta(weeks=weeks):
                     continue
             counter[member] = counter.get(member, 0) + 1
         except:
@@ -289,7 +289,7 @@ def generate_weekly_report():
     if not template:
         return "❌ Не найден активный шаблон отчёта"
     top_text = "📭 На этой неделе похвал ещё нет. Давайте активнее! 🔥" if not top else "\n".join(f"{i}. {m} — {c} 👏" for i, (m, c) in enumerate(top, 1))
-    return template["text"].format(top_list=top_text, date=datetime.now().strftime("%d.%m.%Y"), week_start=(datetime.now() - timedelta(days=7)).strftime("%d.%m.%Y"))
+    return template["text"].format(top_list=top_text, date=datetime.now(pytz.timezone("Europe/Moscow")).strftime("%d.%m.%Y"), week_start=(datetime.now() - timedelta(days=7)).strftime("%d.%m.%Y"))
 
 async def send_weekly_report():
     if not REPORT_CHAT_ID:
@@ -307,7 +307,7 @@ async def send_weekly_report():
 
 def add_complaint(from_user, from_user_id, to_member, reason):
     ws = sheet.worksheet("жалобы")
-    ws.append_row([from_user, str(from_user_id), to_member, reason, datetime.now().strftime("%d.%m.%Y %H:%M"), "активна", "", ""])
+    ws.append_row([from_user, str(from_user_id), to_member, reason, datetime.now(pytz.timezone("Europe/Moscow")).strftime("%d.%m.%Y %H:%M"), "активна", "", ""])
 
 def get_complaints():
     return sheet.worksheet("жалобы").get_all_values()
@@ -320,7 +320,7 @@ def close_complaint(index, closed_by=None):
     if closed_by:
         try:
             ws = sheet.worksheet("жалобы")
-            ws.update_cell(index + 2, 8, f"{closed_by} | {datetime.now().strftime('%d.%m.%Y %H:%M')}")
+            ws.update_cell(index + 2, 8, f"{closed_by} | {datetime.now(pytz.timezone("Europe/Moscow")).strftime('%d.%m.%Y %H:%M')}")
         except:
             pass
 
