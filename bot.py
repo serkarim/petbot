@@ -383,6 +383,76 @@ class ActionState(StatesGroup):
     reg_select_existing = State()
     reg_existing_confirm = State()
 
+
+# =========================
+# 🔤 АВТО-ОТВЕТЫ НА СЛОВА
+# =========================
+
+# Слова для отслеживания
+JDM_TRIGGERS = ["jdm", "ждм", "JDM", "ЖДМ", "Jdm", "Ждм"]
+
+# Ответ бота (можно менять)
+JDM_RESPONSE = """
+🏎️ <b>JDM лохи!!!</b> 🏎️
+"""
+
+
+@dp.message_handler()
+async def auto_response_jdm(message: types.Message):
+    """Отвечает на слова jdm/ждм в чате"""
+    try:
+        # Не отвечаем ботам и в личных сообщениях
+        if message.from_user.is_bot:
+            return
+
+        # Проверяем, что это группа (не ЛС)
+        if message.chat.type == "private":
+            return
+
+        # Получаем текст сообщения
+        text = message.text
+        if not text:
+            return
+
+        # Проверяем наличие триггеров (без учёта регистра)
+        text_lower = text.lower()
+        if any(trigger.lower() in text_lower for trigger in JDM_TRIGGERS):
+            # Отвечаем с задержкой 1 секунда (чтобы выглядело естественнее)
+            await asyncio.sleep(1)
+            await message.answer(JDM_RESPONSE, parse_mode="HTML")
+            logging.info(f"🏎️ JDM-ответ отправлен в чате {message.chat.id}")
+    except Exception as e:
+        logging.error(f"❌ auto_response_jdm: {e}")
+
+
+# =========================
+# 🎛 АДМИН-КОМАНДЫ ДЛЯ JDM
+# =========================
+
+@dp.message_handler(commands=["set_jdm_response"])
+async def set_jdm_response(message: types.Message):
+    """Админ меняет текст ответа на jdm"""
+    if message.from_user.id not in ADMINS:
+        await message.answer("❌ Только для админов")
+        return
+
+    new_text = message.text.replace("/set_jdm_response", "").strip()
+    if not new_text:
+        await message.answer("❌ Введите текст после команды\n\nПример:\n/set_jdm_response 🏎️ JDM FOREVER!")
+        return
+
+    global JDM_RESPONSE
+    JDM_RESPONSE = new_text
+    await message.answer("✅ Текст ответа на JDM обновлён!")
+    logging.info(f"📝 JDM-ответ изменён админом {message.from_user.full_name}")
+
+
+@dp.message_handler(commands=["test_jdm"])
+async def test_jdm(message: types.Message):
+    """Админ тестирует JDM-ответ"""
+    if message.from_user.id not in ADMINS:
+        return
+    await message.answer(JDM_RESPONSE, parse_mode="HTML")
 # =========================
 # START / CANCEL / BACK
 # =========================
