@@ -393,7 +393,7 @@ JDM_TRIGGERS = ["jdm", "ждм", "JDM", "ЖДМ", "Jdm", "Ждм"]
 
 # Ответ бота (можно менять)
 JDM_RESPONSE = """
-🏎️ <b>JDM лохи!!!</b> 🏎️
+<b>JDM лохи!!! слава петушкам!!!</b> 
 """
 
 
@@ -438,7 +438,11 @@ async def set_jdm_response(message: types.Message):
 
     new_text = message.text.replace("/set_jdm_response", "").strip()
     if not new_text:
-        await message.answer("❌ Введите текст после команды\n\nПример:\n/set_jdm_response 🏎️ JDM FOREVER!")
+        await message.answer(
+            "❌ Введите текст после команды\n\n"
+            "Пример:\n"
+            "/set_jdm_response 🏎️ JDM FOREVER!"
+        )
         return
 
     global JDM_RESPONSE
