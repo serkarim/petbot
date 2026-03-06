@@ -1525,6 +1525,10 @@ async def save_template_text(message: types.Message, state: FSMContext):
         user = message.from_user
         username = f"@{user.username}" if user.username else user.full_name
         append_log("ИЗМЕНЕНИЕ_ШАБЛОНА", username, user.id, f"Шаблон ID:{tid}")
+        user_id = message.from_user.id
+        existing_nick = find_member_by_tg_id(user_id)
+        apps = get_applications(status="ожидает")
+        has_pending = any(app[4] == str(user_id) for app in apps)
         await message.answer("✅ Обновлено!", reply_markup=main_menu(message.from_user.id))
         await state.finish()
     except Exception as e:
@@ -1552,7 +1556,11 @@ async def save_new_template(message: types.Message, state: FSMContext):
         user = message.from_user
         username = f"@{user.username}" if user.username else user.full_name
         append_log("СОЗДАНИЕ_ШАБЛОНА", username, user.id, f"Шаблон '{name}' ID:{new_id}")
-        await message.answer(f"✅ Создан! ID: {new_id}", reply_markup=main_menu(message.from_user.id))
+        user_id = message.from_user.id
+        existing_nick = find_member_by_tg_id(user_id)
+        apps = get_applications(status="ожидает")
+        has_pending = any(app[4] == str(user_id) for app in apps)
+        await message.answer(f"✅ Создан! ID: {new_id}", reply_markup=main_menu(user_id, is_registered=(existing_nick is not None), has_pending_app=has_pending))
         await state.finish()
     except Exception as e:
         logging.error(f"❌ save_new_template: {e}")
@@ -1702,7 +1710,40 @@ async def complaint_actions(callback: types.CallbackQuery):
         await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
     except Exception as e:
         logging.error(f"❌ complaint_actions: {e}")
+# =========================
+# 🛠 ВРЕМЕННЫЕ КОМАНДЫ (можно удалить после настройки)
+# =========================
 
+@dp.message_handler(commands=["test_report"])
+async def test_report_cmd(message: types.Message):
+    if message.from_user.id not in ADMINS:
+        return
+    report = generate_weekly_report()
+    if REPORT_TOPIC_ID and REPORT_TOPIC_ID.isdigit():
+        await bot.send_message(
+            chat_id=REPORT_CHAT_ID,
+            text=report,
+            parse_mode="HTML",
+            message_thread_id=int(REPORT_TOPIC_ID)
+        )
+    else:
+        await bot.send_message(
+            chat_id=REPORT_CHAT_ID,
+            text=report,
+            parse_mode="HTML"
+        )
+    await message.answer("✅ Отчёт отправлен в группу!")
+
+@dp.message_handler(commands=["getid"])
+async def get_chat_id(message: types.Message):
+    if message.from_user.id not in ADMINS:
+        return
+    chat_id = message.chat.id
+    thread_id = message.message_thread_id if hasattr(message, 'message_thread_id') else None
+    text = f"🆔 <b>ID чата:</b> <code>{chat_id}</code>"
+    if thread_id:
+        text += f"\n📑 <b>ID темы:</b> <code>{thread_id}</code>"
+    await message.answer(text, parse_mode="HTML")
 # =========================
 # ⏰ ПЛАНИРОВЩИК
 # =========================
