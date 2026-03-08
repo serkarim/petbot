@@ -23,6 +23,7 @@ SPREADSHEET_KEY = os.getenv("SPREADSHEET_KEY")
 ADMINS = list(map(int, os.getenv("ADMINS", "").split(",")))
 REPORT_CHAT_ID = os.getenv("REPORT_CHAT_ID")
 REPORT_TOPIC_ID = os.getenv("REPORT_TOPIC_ID")
+WARN_CHAT_ID = os.getenv("WARN_CHAT_ID")
 GROUP_LINK = os.getenv("GROUP_LINK")
 
 scope = [
@@ -361,6 +362,7 @@ def main_menu(user_id, is_registered=False, has_pending_app=False):
             keyboard.add(InlineKeyboardButton("📋 Статус заявки", callback_data="app_status"))
     if user_id in ADMINS:
         keyboard.add(InlineKeyboardButton("🎖 Разряды", callback_data="roles_menu"))
+        keyboard.add(InlineKeyboardButton("📢 Оповещения", callback_data="notify_menu"))
         keyboard.add(InlineKeyboardButton("📝 Логи", callback_data="logs"))
         keyboard.add(InlineKeyboardButton("📄 Шаблоны отчётов", callback_data="templates_menu"))
         keyboard.add(InlineKeyboardButton("📬 Заявки", callback_data="applications_menu"))
@@ -480,79 +482,7 @@ async def cancel_handler(message: types.Message, state: FSMContext):
         )
     except Exception as e:
         logging.error(f"❌ cancel: {e}")
-# =========================
-# 🔤 АВТО-ОТВЕТЫ НА СЛОВА
-# =========================
 
-# Слова для отслеживания
-JDM_TRIGGERS = ["jdm", "ждм", "JDM", "ЖДМ", "Jdm", "Ждм"]
-
-# Ответ бота (можно менять)
-JDM_RESPONSE = """
-<b>JDM лохи!!! слава петушкам!!!</b> 
-"""
-
-
-@dp.message_handler()
-async def auto_response_jdm(message: types.Message):
-    """Отвечает на слова jdm/ждм в чате"""
-    try:
-        # Не отвечаем ботам и в личных сообщениях
-        if message.from_user.is_bot:
-            return
-
-        # Проверяем, что это группа (не ЛС)
-        if message.chat.type == "private":
-            return
-
-        # Получаем текст сообщения
-        text = message.text
-        if not text:
-            return
-
-        # Проверяем наличие триггеров (без учёта регистра)
-        text_lower = text.lower()
-        if any(trigger.lower() in text_lower for trigger in JDM_TRIGGERS):
-            # Отвечаем с задержкой 1 секунда (чтобы выглядело естественнее)
-            await asyncio.sleep(1)
-            await message.answer(JDM_RESPONSE, parse_mode="HTML")
-            logging.info(f"🏎️ JDM-ответ отправлен в чате {message.chat.id}")
-    except Exception as e:
-        logging.error(f"❌ auto_response_jdm: {e}")
-
-
-# =========================
-# 🎛 АДМИН-КОМАНДЫ ДЛЯ JDM
-# =========================
-
-@dp.message_handler(commands=["set_jdm_response"])
-async def set_jdm_response(message: types.Message):
-    """Админ меняет текст ответа на jdm"""
-    if message.from_user.id not in ADMINS:
-        await message.answer("❌ Только для админов")
-        return
-
-    new_text = message.text.replace("/set_jdm_response", "").strip()
-    if not new_text:
-        await message.answer(
-            "❌ Введите текст после команды\n\n"
-            "Пример:\n"
-            "/set_jdm_response 🏎️ JDM FOREVER!"
-        )
-        return
-
-    global JDM_RESPONSE
-    JDM_RESPONSE = new_text
-    await message.answer("✅ Текст ответа на JDM обновлён!")
-    logging.info(f"📝 JDM-ответ изменён админом {message.from_user.full_name}")
-
-
-@dp.message_handler(commands=["test_jdm"])
-async def test_jdm(message: types.Message):
-    """Админ тестирует JDM-ответ"""
-    if message.from_user.id not in ADMINS:
-        return
-    await message.answer(JDM_RESPONSE, parse_mode="HTML")
 
 
 # =========================
@@ -1520,6 +1450,181 @@ async def stats_all(callback: types.CallbackQuery):
     except Exception as e:
         logging.error(f"❌ stats_all: {e}")
 
+#== == == == == == == == == == == == =
+#📢 ОПОВЕЩЕНИЯ
+#== == == == == == == == == == == == =
+
+class NotifyState(StatesGroup):
+    waiting_message = State()
+    waiting_audience = State()
+
+
+@dp.callback_query_handler(lambda c: c.data == "notify_menu")
+async def notify_menu(callback: types.CallbackQuery):
+    try:
+        if callback.from_user.id not in ADMINS:
+            await callback.answer("❌ Только для админов", show_alert=True)
+            return
+
+        keyboard = InlineKeyboardMarkup(row_width=1)
+        keyboard.add(
+            InlineKeyboardButton("👥 Всем участникам", callback_data="notify_all"),
+            InlineKeyboardButton("🎖 Только админам", callback_data="notify_admins"),
+            InlineKeyboardButton("🪖 Сквадным", callback_data="notify_role_сквадной"),
+            InlineKeyboardButton("🎯 Пехам", callback_data="notify_role_пех"),
+            InlineKeyboardButton("🔧 Техам", callback_data="notify_role_тех"),
+            InlineKeyboardButton("🏠 В меню", callback_data="back_menu")
+        )
+
+        await callback.message.edit_text(
+            "📢 Оповещения\nВыберите аудиторию:",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"❌ notify_menu: {e}")
+
+
+@dp.callback_query_handler(lambda c: c.data.startswith("notify_"))
+async def notify_select_audience(callback: types.CallbackQuery, state: FSMContext):
+    try:
+        if callback.from_user.id not in ADMINS:
+            await callback.answer("❌ Только для админов", show_alert=True)
+            return
+
+        audience = callback.data.replace("notify_", "")
+        await state.update_data(notify_audience=audience)
+        await NotifyState.waiting_message.set()
+
+        audience_names = {
+            "all": "всем участникам",
+            "admins": "админам",
+            "role_сквадной": "сквадным",
+            "role_пех": "пехам",
+            "role_тех": "техам"
+        }
+
+        await callback.message.edit_text(
+            f"📢 Оповещение для: {audience_names.get(audience, 'выбранной группы')}\n\n"
+            "📝 Введите текст сообщения (или /cancel):",
+            reply_markup=InlineKeyboardMarkup().add(
+                InlineKeyboardButton("🔙 Отмена", callback_data="back_menu")
+            )
+        )
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"❌ notify_select_audience: {e}")
+
+
+@dp.message_handler(state=NotifyState.waiting_message)
+async def notify_process_message(message: types.Message, state: FSMContext):
+    try:
+        data = await state.get_data()
+        audience = data.get("notify_audience")
+        text = message.text
+
+        if not audience or not text:
+            await message.answer("❌ Ошибка данных")
+            await state.finish()
+            return
+
+        # Получаем список получателей
+        recipients = []
+
+        if audience == "all":
+            # Все участники с TG ID
+            ws = sheet.worksheet("участники клана")
+            rows = ws.get_all_values()[1:]
+            for row in rows:
+                if len(row) >= 9 and row[8].strip():
+                    try:
+                        recipients.append(int(row[8]))
+                    except:
+                        pass
+            # Добавляем админов
+            recipients.extend(ADMINS)
+            recipients = list(set(recipients))  # Убираем дубликаты
+
+        elif audience == "admins":
+            recipients = ADMINS
+
+        elif audience.startswith("role_"):
+            role = audience.replace("role_", "")
+            members = get_members_by_role(role)
+            ws = sheet.worksheet("участники клана")
+            rows = ws.get_all_values()[1:]
+            for row in rows:
+                if len(row) >= 9 and row[0].strip() in members and row[8].strip():
+                    try:
+                        recipients.append(int(row[8]))
+                    except:
+                        pass
+
+        if not recipients:
+            await message.answer("❌ Нет получателей для этой группы")
+            await state.finish()
+            return
+
+        # Отправляем уведомления
+        sent_count = 0
+        failed_count = 0
+
+        for user_id in recipients:
+            try:
+                await bot.send_message(
+                    chat_id=user_id,
+                    text=f"📢 <b>Оповещение от администрации</b>\n\n{text}",
+                    parse_mode="HTML"
+                )
+                sent_count += 1
+                await asyncio.sleep(0.1)  # Небольшая задержка
+            except Exception as e:
+                logging.error(f"❌ Не удалось отправить пользователю {user_id}: {e}")
+                failed_count += 1
+
+        # Если всем участникам - отправляем ещё и в тему группы
+        if audience == "all" and REPORT_CHAT_ID:
+            try:
+                if REPORT_TOPIC_ID and WARN_CHAT_ID.isdigit():
+                    await bot.send_message(
+                        chat_id=REPORT_CHAT_ID,
+                        text=f"📢 <b>Оповещение для всех участников</b>\n\n{text}",
+                        parse_mode="HTML",
+                        message_thread_id=int(WARN_CHAT_ID)
+                    )
+                else:
+                    await bot.send_message(
+                        chat_id=REPORT_CHAT_ID,
+                        text=f"📢 <b>Оповещение для всех участников</b>\n\n{text}",
+                        parse_mode="HTML"
+                    )
+            except Exception as e:
+                logging.error(f"❌ Ошибка отправки в группу: {e}")
+
+        # Логирование
+        append_log(
+            "ОПОВЕЩЕНИЕ",
+            message.from_user.full_name,
+            message.from_user.id,
+            f"Аудитория: {audience}, Отправлено: {sent_count}, Ошибок: {failed_count}"
+        )
+
+        await message.answer(
+            f"✅ Оповещение отправлено!\n\n"
+            f"📊 Статистика:\n"
+            f"• Отправлено: {sent_count}\n"
+            f"• Ошибок: {failed_count}\n"
+            f"• Аудитория: {audience}",
+            reply_markup=main_menu(message.from_user.id, is_registered=True)
+        )
+
+        await state.finish()
+
+    except Exception as e:
+        logging.error(f"❌ notify_process_message: {e}")
+        await message.answer("❌ Произошла ошибка при отправке")
+        await state.finish()
 # =========================
 # 📄 ШАБЛОНЫ ОТЧЁТОВ
 # =========================
@@ -1866,6 +1971,79 @@ async def get_chat_id(message: types.Message):
     if thread_id:
         text += f"\n📑 <b>ID темы:</b> <code>{thread_id}</code>"
     await message.answer(text, parse_mode="HTML")
+# =========================
+# 🔤 АВТО-ОТВЕТЫ НА СЛОВА
+# =========================
+
+# Слова для отслеживания
+JDM_TRIGGERS = ["jdm", "ждм", "JDM", "ЖДМ", "Jdm", "Ждм"]
+
+# Ответ бота (можно менять)
+JDM_RESPONSE = """
+<b>JDM лохи!!! слава петушкам!!!</b> 
+"""
+
+
+@dp.message_handler()
+async def auto_response_jdm(message: types.Message):
+    """Отвечает на слова jdm/ждм в чате"""
+    try:
+        # Не отвечаем ботам и в личных сообщениях
+        if message.from_user.is_bot:
+            return
+
+        # Проверяем, что это группа (не ЛС)
+        if message.chat.type == "private":
+            return
+
+        # Получаем текст сообщения
+        text = message.text
+        if not text:
+            return
+
+        # Проверяем наличие триггеров (без учёта регистра)
+        text_lower = text.lower()
+        if any(trigger.lower() in text_lower for trigger in JDM_TRIGGERS):
+            # Отвечаем с задержкой 1 секунда (чтобы выглядело естественнее)
+            await asyncio.sleep(1)
+            await message.answer(JDM_RESPONSE, parse_mode="HTML")
+            logging.info(f"🏎️ JDM-ответ отправлен в чате {message.chat.id}")
+    except Exception as e:
+        logging.error(f"❌ auto_response_jdm: {e}")
+
+
+# =========================
+# 🎛 АДМИН-КОМАНДЫ ДЛЯ JDM
+# =========================
+
+@dp.message_handler(commands=["set_jdm_response"])
+async def set_jdm_response(message: types.Message):
+    """Админ меняет текст ответа на jdm"""
+    if message.from_user.id not in ADMINS:
+        await message.answer("❌ Только для админов")
+        return
+
+    new_text = message.text.replace("/set_jdm_response", "").strip()
+    if not new_text:
+        await message.answer(
+            "❌ Введите текст после команды\n\n"
+            "Пример:\n"
+            "/set_jdm_response 🏎️ JDM FOREVER!"
+        )
+        return
+
+    global JDM_RESPONSE
+    JDM_RESPONSE = new_text
+    await message.answer("✅ Текст ответа на JDM обновлён!")
+    logging.info(f"📝 JDM-ответ изменён админом {message.from_user.full_name}")
+
+
+@dp.message_handler(commands=["test_jdm"])
+async def test_jdm(message: types.Message):
+    """Админ тестирует JDM-ответ"""
+    if message.from_user.id not in ADMINS:
+        return
+    await message.answer(JDM_RESPONSE, parse_mode="HTML")
 # =========================
 # ⏰ ПЛАНИРОВЩИК
 # =========================
