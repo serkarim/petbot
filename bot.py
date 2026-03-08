@@ -1612,7 +1612,7 @@ async def save_template_text(message: types.Message, state: FSMContext):
         existing_nick = find_member_by_tg_id(user_id)
         apps = get_applications(status="ожидает")
         has_pending = any(app[4] == str(user_id) for app in apps)
-        await message.answer("✅ Обновлено!", reply_markup=main_menu(message.from_user.id))
+        await message.answer("✅ Обновлено!", reply_markup=main_menu(user_id, is_registered=(existing_nick is not None), has_pending_app=has_pending))
         await state.finish()
     except Exception as e:
         logging.error(f"❌ save_template_text: {e}")
@@ -1622,7 +1622,7 @@ async def save_template_name(message: types.Message, state: FSMContext):
     try:
         await state.update_data(new_template_name=message.text)
         await ActionState.new_template_text.set()
-        await message.answer("📝 Теперь введите текст шаблона:")
+        await message.answer("📝 Теперь введите текст шаблона: Переменные: {top_list}, {date}, {week_start}")
     except Exception as e:
         logging.error(f"❌ save_template_name: {e}")
 
