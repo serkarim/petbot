@@ -383,7 +383,64 @@ class ActionState(StatesGroup):
     reg_select_existing = State()
     reg_existing_confirm = State()
 
+# =========================
+# START / CANCEL / BACK
+# =========================
+@dp.message_handler(commands=["start"])
+async def start(message: types.Message, state: FSMContext):
+    try:
+        user_id = message.from_user.id
+        username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name
+        existing_nick = find_member_by_tg_id(user_id)
+        if existing_nick:
+            safe_nick = html_lib.escape(existing_nick)
+            await message.answer(f"👋 С возвращением, {username}!\n✅ Вы уже зарегистрированы как {safe_nick}", reply_markup=main_menu(user_id, is_registered=True), parse_mode="HTML")
+        else:
+            apps = get_applications(status="ожидает")
+            has_pending = any(app[4] == str(user_id) for app in apps)
+            await state.update_data(tg_username=username, tg_id=user_id)
+            keyboard = InlineKeyboardMarkup()
+            keyboard.add(InlineKeyboardButton("📝 Подать заявку", callback_data="apply_start"))
+            if has_pending:
+                keyboard.add(InlineKeyboardButton("📋 Статус заявки", callback_data="app_status"))
+            await message.answer(f"👋 Привет, {username}!\nЧтобы вступить в клан:\n1️⃣ Подать заявку\n2️⃣ Дождаться проверки\n3️⃣ Получить ссылку\nГотовы?", reply_markup=keyboard, parse_mode="HTML")
+    except Exception as e:
+        logging.error(f"❌ start: {e}")
 
+@dp.callback_query_handler(lambda c: c.data == "back_menu")
+async def back_menu(callback: types.CallbackQuery):
+    try:
+        user_id = callback.from_user.id
+        existing_nick = find_member_by_tg_id(user_id)
+        apps = get_applications(status="ожидает")
+        has_pending = any(app[4] == str(user_id) for app in apps)
+        await callback.message.edit_text("Главное меню:", reply_markup=main_menu(user_id, is_registered=(existing_nick is not None), has_pending_app=has_pending))
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"❌ back_menu: {e}")
+        await callback.answer("❌ Ошибка", show_alert=True)
+
+
+@dp.message_handler(state='*', commands=['cancel'])
+async def cancel_handler(message: types.Message, state: FSMContext):
+    try:
+        current_state = await state.get_state()
+        if current_state is None:
+            return
+
+        user_id = message.from_user.id
+        existing_nick = find_member_by_tg_id(user_id)
+        apps = get_applications(status="ожидает")
+        has_pending = any(app[4] == str(user_id) for app in apps)
+
+        await state.finish()
+
+        await message.answer(
+            "✅ Действие отменено",
+            reply_markup=main_menu(user_id, is_registered=(existing_nick is not None), has_pending_app=has_pending)
+        )
+    except Exception as e:
+        logging.error(f"❌ cancel: {e}")
 # =========================
 # 🔤 АВТО-ОТВЕТЫ НА СЛОВА
 # =========================
@@ -457,64 +514,7 @@ async def test_jdm(message: types.Message):
     if message.from_user.id not in ADMINS:
         return
     await message.answer(JDM_RESPONSE, parse_mode="HTML")
-# =========================
-# START / CANCEL / BACK
-# =========================
-@dp.message_handler(commands=["start"])
-async def start(message: types.Message, state: FSMContext):
-    try:
-        user_id = message.from_user.id
-        username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name
-        existing_nick = find_member_by_tg_id(user_id)
-        if existing_nick:
-            safe_nick = html_lib.escape(existing_nick)
-            await message.answer(f"👋 С возвращением, {username}!\n✅ Вы уже зарегистрированы как {safe_nick}", reply_markup=main_menu(user_id, is_registered=True), parse_mode="HTML")
-        else:
-            apps = get_applications(status="ожидает")
-            has_pending = any(app[4] == str(user_id) for app in apps)
-            await state.update_data(tg_username=username, tg_id=user_id)
-            keyboard = InlineKeyboardMarkup()
-            keyboard.add(InlineKeyboardButton("📝 Подать заявку", callback_data="apply_start"))
-            if has_pending:
-                keyboard.add(InlineKeyboardButton("📋 Статус заявки", callback_data="app_status"))
-            await message.answer(f"👋 Привет, {username}!\nЧтобы вступить в клан:\n1️⃣ Подать заявку\n2️⃣ Дождаться проверки\n3️⃣ Получить ссылку\nГотовы?", reply_markup=keyboard, parse_mode="HTML")
-    except Exception as e:
-        logging.error(f"❌ start: {e}")
 
-@dp.callback_query_handler(lambda c: c.data == "back_menu")
-async def back_menu(callback: types.CallbackQuery):
-    try:
-        user_id = callback.from_user.id
-        existing_nick = find_member_by_tg_id(user_id)
-        apps = get_applications(status="ожидает")
-        has_pending = any(app[4] == str(user_id) for app in apps)
-        await callback.message.edit_text("Главное меню:", reply_markup=main_menu(user_id, is_registered=(existing_nick is not None), has_pending_app=has_pending))
-        await callback.answer()
-    except Exception as e:
-        logging.error(f"❌ back_menu: {e}")
-        await callback.answer("❌ Ошибка", show_alert=True)
-
-
-@dp.message_handler(state='*', commands=['cancel'])
-async def cancel_handler(message: types.Message, state: FSMContext):
-    try:
-        current_state = await state.get_state()
-        if current_state is None:
-            return
-
-        user_id = message.from_user.id
-        existing_nick = find_member_by_tg_id(user_id)
-        apps = get_applications(status="ожидает")
-        has_pending = any(app[4] == str(user_id) for app in apps)
-
-        await state.finish()
-
-        await message.answer(
-            "✅ Действие отменено",
-            reply_markup=main_menu(user_id, is_registered=(existing_nick is not None), has_pending_app=has_pending)
-        )
-    except Exception as e:
-        logging.error(f"❌ cancel: {e}")
 
 # =========================
 # 📝 РЕГИСТРАЦИЯ
