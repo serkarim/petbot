@@ -392,9 +392,40 @@ async def start(message: types.Message, state: FSMContext):
         user_id = message.from_user.id
         username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name
         existing_nick = find_member_by_tg_id(user_id)
+
+        # 🎨 ФОТО ДЛЯ [PET] КИРЮХА (замени ID на его Telegram ID)
+        KIRYUKHA_ID = 8130282670  # ID из твоих логов (@stone_lord)
+        PHOTO_URL = "https://imgur.com/a/umGqI3d"  # Ссылка на фото
+
         if existing_nick:
             safe_nick = html_lib.escape(existing_nick)
-            await message.answer(f"👋 С возвращением, {username}!\n✅ Вы уже зарегистрированы как {safe_nick}", reply_markup=main_menu(user_id, is_registered=True), parse_mode="HTML")
+
+            # Если это КИРЮХА — отправляем с фото
+            if user_id == KIRYUKHA_ID:
+                try:
+                    await bot.send_photo(
+                        chat_id=user_id,
+                        photo=PHOTO_URL,  # Или file_id: "AgACAgIA..."
+                        caption=(
+                            f"👋 <b>С возвращением, Шеф!</b>\n\n"
+                            f"✅ Вы зарегистрированы как <b>{safe_nick}</b>\n\n"
+                            f"🎮 Клан PET | Бот v2.0"
+                        ),
+                        reply_markup=main_menu(user_id, is_registered=True),
+                        parse_mode="HTML"
+                    )
+                    return
+                except Exception as e:
+                    logging.error(f"❌ Ошибка отправки фото: {e}")
+                    # Если фото не отправилось — отправляем обычное сообщение
+
+            # Обычное приветствие для остальных
+            await message.answer(
+                f"👋 <b>С возвращением, {username}!</b>\n\n"
+                f"✅ Вы уже зарегистрированы как <b>{safe_nick}</b>",
+                reply_markup=main_menu(user_id, is_registered=True),
+                parse_mode="HTML"
+            )
         else:
             apps = get_applications(status="ожидает")
             has_pending = any(app[4] == str(user_id) for app in apps)
@@ -403,10 +434,18 @@ async def start(message: types.Message, state: FSMContext):
             keyboard.add(InlineKeyboardButton("📝 Подать заявку", callback_data="apply_start"))
             if has_pending:
                 keyboard.add(InlineKeyboardButton("📋 Статус заявки", callback_data="app_status"))
-            await message.answer(f"👋 Привет, {username}!\nЧтобы вступить в клан:\n1️⃣ Подать заявку\n2️⃣ Дождаться проверки\n3️⃣ Получить ссылку\nГотовы?", reply_markup=keyboard, parse_mode="HTML")
+            await message.answer(
+                f"👋 <b>Привет, {username}!</b>\n\n"
+                f"Чтобы вступить в клан:\n"
+                f"1️⃣ Подать заявку\n"
+                f"2️⃣ Дождаться проверки\n"
+                f"3️⃣ Получить ссылку\n\n"
+                f"<b>Готовы?</b>",
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
     except Exception as e:
         logging.error(f"❌ start: {e}")
-
 @dp.callback_query_handler(lambda c: c.data == "back_menu")
 async def back_menu(callback: types.CallbackQuery):
     try:
