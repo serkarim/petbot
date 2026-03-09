@@ -397,7 +397,7 @@ async def start(message: types.Message, state: FSMContext):
 
         # 🎨 ФОТО ДЛЯ [PET] КИРЮХА (замени ID на его Telegram ID)
         KIRYUKHA_ID = 8130282670  # ID из твоих логов (@stone_lord)
-        PHOTO_URL = "https://imgur.com/a/umGqI3d"  # Ссылка на фото
+        PHOTO_URL = "https://github.com/serkarim/petbot/blob/4f8525d03638a5df38e357a3fc34402889592a60/photo_2026-03-08_11-27-57.jpg"  # Ссылка на фото
 
         if existing_nick:
             safe_nick = html_lib.escape(existing_nick)
@@ -1457,6 +1457,7 @@ async def stats_all(callback: types.CallbackQuery):
 class NotifyState(StatesGroup):
     waiting_message = State()
     waiting_audience = State()
+    waiting_photo = State()  # Новое состояние для фото
 
 
 @dp.callback_query_handler(lambda c: c.data == "notify_menu")
@@ -1524,107 +1525,169 @@ async def notify_process_message(message: types.Message, state: FSMContext):
         audience = data.get("notify_audience")
         text = message.text
 
-        if not audience or not text:
-            await message.answer("❌ Ошибка данных")
-            await state.finish()
-            return
+        await state.update_data(notify_text=text)
+        await NotifyState.waiting_photo.set()
 
-        # Получаем список получателей
-        recipients = []
+        keyboard = InlineKeyboardMarkup(row_width=1)
+        keyboard.add(
+            InlineKeyboardButton("📷 Отправить с фото", callback_data="notify_with_photo"),
+            InlineKeyboardButton("⏭ Пропустить (без фото)", callback_data="notify_no_photo")
+        )
 
-        if audience == "all":
-            # Все участники с TG ID
-            ws = sheet.worksheet("участники клана")
-            rows = ws.get_all_values()[1:]
-            for row in rows:
-                if len(row) >= 9 and row[8].strip():
-                    try:
-                        recipients.append(int(row[8]))
-                    except:
-                        pass
-            # Добавляем админов
-            recipients.extend(ADMINS)
-            recipients = list(set(recipients))  # Убираем дубликаты
+        await message.answer(
+            "📎 Хотите прикрепить фото к оповещению?\n\n"
+            "Отправьте фото сейчас или выберите:",
+            reply_markup=keyboard
+        )
+    except Exception as e:
+        logging.error(f"❌ notify_process_message: {e}")
+@dp.callback_query_handler(lambda c: c.data == "notify_no_photo", state=NotifyState.waiting_photo)
+async def notify_no_photo(callback: types.CallbackQuery, state: FSMContext):
+    await state.update_data(photo_file_id=None)
+    await finalize_notification(callback.message, state)
+    await callback.answer()
 
-        elif audience == "admins":
-            recipients = ADMINS
+@dp.callback_query_handler(lambda c: c.data == "notify_with_photo", state=NotifyState.waiting_photo)
+async def notify_with_photo(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.answer("📸 Отправьте фото сейчас (или /cancel):")
+    await callback.answer()
 
-        elif audience.startswith("role_"):
-            role = audience.replace("role_", "")
-            members = get_members_by_role(role)
-            ws = sheet.worksheet("участники клана")
-            rows = ws.get_all_values()[1:]
-            for row in rows:
-                if len(row) >= 9 and row[0].strip() in members and row[8].strip():
-                    try:
-                        recipients.append(int(row[8]))
-                    except:
-                        pass
+@dp.message_handler(state=NotifyState.waiting_photo, content_types=types.ContentTypes.PHOTO)
+async def notify_receive_photo(message: types.Message, state: FSMContext):
+    try:
+        photo_file_id = message.photo[-1].file_id
+        await state.update_data(photo_file_id=photo_file_id)
+        await finalize_notification(message, state)
+    except Exception as e:
+        logging.error(f"❌ notify_receive_photo: {e}")
+        await message.answer("❌ Ошибка сохранения фото")
+        await state.finish()
+
+
+async def finalize_notification(message: types.Message, state: FSMContext):
+    try:
+        data = await state.get_data()
+        audience = data.get("notify_audience")
+        text = data.get("notify_text")
+        photo_file_id = data.get("photo_file_id")
+
+        # Получаем список получателей (как в предыдущем коде)
+        recipients = get_recipients_by_audience(audience)
 
         if not recipients:
-            await message.answer("❌ Нет получателей для этой группы")
+            await message.answer("❌ Нет получателей")
             await state.finish()
             return
 
-        # Отправляем уведомления
         sent_count = 0
         failed_count = 0
 
         for user_id in recipients:
             try:
-                await bot.send_message(
-                    chat_id=user_id,
-                    text=f"📢 <b>Оповещение от администрации</b>\n\n{text}",
-                    parse_mode="HTML"
-                )
-                sent_count += 1
-                await asyncio.sleep(0.1)  # Небольшая задержка
-            except Exception as e:
-                logging.error(f"❌ Не удалось отправить пользователю {user_id}: {e}")
-                failed_count += 1
-
-        # Если всем участникам - отправляем ещё и в тему группы
-        if audience == "all" and REPORT_CHAT_ID:
-            try:
-                if REPORT_TOPIC_ID and WARN_CHAT_ID.isdigit():
-                    await bot.send_message(
-                        chat_id=REPORT_CHAT_ID,
-                        text=f"📢 <b>Оповещение для всех участников</b>\n\n{text}",
-                        parse_mode="HTML",
-                        message_thread_id=int(WARN_CHAT_ID)
+                if photo_file_id:
+                    await bot.send_photo(
+                        chat_id=user_id,
+                        photo=photo_file_id,
+                        caption=f"📢 <b>Оповещение</b>\n\n{text}",
+                        parse_mode="HTML"
                     )
                 else:
                     await bot.send_message(
-                        chat_id=REPORT_CHAT_ID,
-                        text=f"📢 <b>Оповещение для всех участников</b>\n\n{text}",
+                        chat_id=user_id,
+                        text=f"📢 <b>Оповещение</b>\n\n{text}",
                         parse_mode="HTML"
                     )
+                sent_count += 1
+                await asyncio.sleep(0.1)
+            except Exception as e:
+                logging.error(f"❌ Ошибка отправки {user_id}: {e}")
+                failed_count += 1
+
+        # Отправка в тему группы (если всем)
+        if audience == "all" and REPORT_CHAT_ID:
+            try:
+                if photo_file_id:
+                    if REPORT_TOPIC_ID and REPORT_TOPIC_ID.isdigit():
+                        await bot.send_photo(
+                            chat_id=REPORT_CHAT_ID,
+                            photo=photo_file_id,
+                            caption=f"📢 <b>Оповещение для всех</b>\n\n{text}",
+                            parse_mode="HTML",
+                            message_thread_id=int(REPORT_TOPIC_ID)
+                        )
+                    else:
+                        await bot.send_photo(
+                            chat_id=REPORT_CHAT_ID,
+                            photo=photo_file_id,
+                            caption=f"📢 <b>Оповещение для всех</b>\n\n{text}",
+                            parse_mode="HTML"
+                        )
+                else:
+                    if REPORT_TOPIC_ID and REPORT_TOPIC_ID.isdigit():
+                        await bot.send_message(
+                            chat_id=REPORT_CHAT_ID,
+                            text=f"📢 <b>Оповещение для всех</b>\n\n{text}",
+                            parse_mode="HTML",
+                            message_thread_id=int(REPORT_TOPIC_ID)
+                        )
+                    else:
+                        await bot.send_message(
+                            chat_id=REPORT_CHAT_ID,
+                            text=f"📢 <b>Оповещение для всех</b>\n\n{text}",
+                            parse_mode="HTML"
+                        )
             except Exception as e:
                 logging.error(f"❌ Ошибка отправки в группу: {e}")
-
-        # Логирование
-        append_log(
-            "ОПОВЕЩЕНИЕ",
-            message.from_user.full_name,
-            message.from_user.id,
-            f"Аудитория: {audience}, Отправлено: {sent_count}, Ошибок: {failed_count}"
-        )
 
         await message.answer(
             f"✅ Оповещение отправлено!\n\n"
             f"📊 Статистика:\n"
             f"• Отправлено: {sent_count}\n"
             f"• Ошибок: {failed_count}\n"
-            f"• Аудитория: {audience}",
+            f"• С фото: {'✅' if photo_file_id else '❌'}",
             reply_markup=main_menu(message.from_user.id, is_registered=True)
         )
 
         await state.finish()
 
     except Exception as e:
-        logging.error(f"❌ notify_process_message: {e}")
-        await message.answer("❌ Произошла ошибка при отправке")
+        logging.error(f"❌ finalize_notification: {e}")
+        await message.answer("❌ Ошибка при отправке")
         await state.finish()
+
+
+def get_recipients_by_audience(audience):
+    """Получить список получателей по аудитории"""
+    recipients = []
+
+    if audience == "all":
+        ws = sheet.worksheet("участники клана")
+        rows = ws.get_all_values()[1:]
+        for row in rows:
+            if len(row) >= 9 and row[8].strip():
+                try:
+                    recipients.append(int(row[8]))
+                except:
+                    pass
+        recipients.extend(ADMINS)
+        recipients = list(set(recipients))
+
+    elif audience == "admins":
+        recipients = ADMINS
+
+    elif audience.startswith("role_"):
+        role = audience.replace("role_", "")
+        members = get_members_by_role(role)
+        ws = sheet.worksheet("участники клана")
+        rows = ws.get_all_values()[1:]
+        for row in rows:
+            if len(row) >= 9 and row[0].strip() in members and row[8].strip():
+                try:
+                    recipients.append(int(row[8]))
+                except:
+                    pass
+
+    return recipients
 # =========================
 # 📄 ШАБЛОНЫ ОТЧЁТОВ
 # =========================
