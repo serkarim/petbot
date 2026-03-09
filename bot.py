@@ -396,7 +396,7 @@ async def start(message: types.Message, state: FSMContext):
         existing_nick = find_member_by_tg_id(user_id)
 
         # 🎨 ФОТО ДЛЯ [PET] КИРЮХА (замени ID на его Telegram ID)
-        KIRYUKHA_ID = 8130282670  # ID из твоих логов (@stone_lord)
+        KIRYUKHA_ID = 123456  # ID из твоих логов (@stone_lord)
         PHOTO_URL = "https://github.com/serkarim/petbot/blob/4f8525d03638a5df38e357a3fc34402889592a60/photo_2026-03-08_11-27-57.jpg"  # Ссылка на фото
 
         if existing_nick:
