@@ -1613,7 +1613,7 @@ async def finalize_notification(message: types.Message, state: FSMContext):
                             photo=photo_file_id,
                             caption=f"📢 <b>Оповещение для всех</b>\n\n{text}",
                             parse_mode="HTML",
-                            message_thread_id=int(REPORT_TOPIC_ID)
+                            message_thread_id=int(WARN_CHAT_ID)
                         )
                     else:
                         await bot.send_photo(
@@ -1628,7 +1628,7 @@ async def finalize_notification(message: types.Message, state: FSMContext):
                             chat_id=REPORT_CHAT_ID,
                             text=f"📢 <b>Оповещение для всех</b>\n\n{text}",
                             parse_mode="HTML",
-                            message_thread_id=int(REPORT_TOPIC_ID)
+                            message_thread_id=int(WARN_CHAT_ID)
                         )
                     else:
                         await bot.send_message(
