@@ -1292,6 +1292,7 @@ async def action_selected(callback: types.CallbackQuery, state: FSMContext):
     except Exception as e:
         logging.error(f"❌ action_selected: {e}")
 
+
 @dp.message_handler(state=ActionState.waiting_reason)
 async def process_reason(message: types.Message, state: FSMContext):
     try:
@@ -1300,38 +1301,62 @@ async def process_reason(message: types.Message, state: FSMContext):
         user = message.from_user
         username = f"@{user.username}" if user.username else user.full_name
         user_id = user.id
+
         if action == "pred":
             if user_id not in ADMINS:
                 await message.answer("❌ Нет прав", reply_markup=main_menu(user_id))
-                await state.finish()
+                await state.finish()  # ✅ Обязательно сбрасываем состояние
                 return
+
             append_pred(member, message.text)
             append_log("ПРЕД", username, user_id, member)
-            user_id = message.from_user.id
+
             existing_nick = find_member_by_tg_id(user_id)
             apps = get_applications(status="ожидает")
             has_pending = any(app[4] == str(user_id) for app in apps)
-            await message.answer("⚠ Пред записан ✅", reply_markup=main_menu(user_id, is_registered=(existing_nick is not None), has_pending_app=has_pending))
+
+            # ✅ Отправляем новое сообщение с меню, но явно завершаем FSM
+            await message.answer(
+                "⚠ Пред записан ✅",
+                reply_markup=main_menu(user_id, is_registered=(existing_nick is not None), has_pending_app=has_pending)
+            )
+            await state.finish()  # ✅ КЛЮЧЕВОЕ: сброс состояния!
+            return
+
         elif action == "praise":
             append_praise(member, username, message.text)
-            user_id = message.from_user.id
+            append_log("ПОХВАЛА", username, user_id, member)
+
             existing_nick = find_member_by_tg_id(user_id)
             apps = get_applications(status="ожидает")
             has_pending = any(app[4] == str(user_id) for app in apps)
-            append_log("ПОХВАЛА", username, user_id, member)
-            await message.answer("👏 Похвала записана ✅",             reply_markup=main_menu(user_id, is_registered=(existing_nick is not None), has_pending_app=has_pending)
-)
+
+            await message.answer(
+                "👏 Похвала записана ✅",
+                reply_markup=main_menu(user_id, is_registered=(existing_nick is not None), has_pending_app=has_pending)
+            )
+            await state.finish()  # ✅ Сброс состояния
+            return
+
         elif action == "complaint":
             add_complaint(username, user_id, member, message.text)
             append_log("ЖАЛОБА", username, user_id, member)
-            user_id = message.from_user.id
+
             existing_nick = find_member_by_tg_id(user_id)
             apps = get_applications(status="ожидает")
             has_pending = any(app[4] == str(user_id) for app in apps)
-            await message.answer("⚖ Жалоба отправлена ✅", reply_markup=main_menu(user_id, is_registered=(existing_nick is not None), has_pending_app=has_pending))
-            await state.finish()
+
+            await message.answer(
+                "⚖ Жалоба отправлена ✅",
+                reply_markup=main_menu(user_id, is_registered=(existing_nick is not None), has_pending_app=has_pending)
+            )
+            await state.finish()  # ✅ Сброс состояния
+            return
+
     except Exception as e:
-        logging.error(f"❌ process_reason: {e}")
+        logging.error(f"❌ process_reason: {e}", exc_info=True)
+        await message.answer("❌ Произошла ошибка")
+        await state.finish()  # ✅ Даже при ошибке сбрасываем состояние
 
 @dp.message_handler(state=ActionState.waiting_proof, content_types=types.ContentTypes.ANY)
 async def process_proof(message: types.Message, state: FSMContext):
@@ -1864,25 +1889,32 @@ async def logs(callback: types.CallbackQuery):
         if callback.from_user.id not in ADMINS:
             await callback.answer("❌ Доступ только для админов", show_alert=True)
             return
+
         logs_data = get_logs()[-10:]
+
         if len(logs_data) <= 1:
             text = "📭 Логи пусты"
         else:
             text = "🕒 Последние 10 действий:\n"
             for row in logs_data[-1:0:-1]:
                 if len(row) >= 5:
-                    action = row[0].replace("`", "\\`")
-                    username = row[1].replace("`", "\\`")
-                    target = row[3].replace("`", "\\`")
-                    date = row[4].replace("`", "\\`")
-                    text += f"`{date}` | {action} | {username} → {target}\n"
+                    # ✅ Используем HTML-экранирование вместо Markdown
+                    action = html_lib.escape(row[0])
+                    username = html_lib.escape(row[1])
+                    target = html_lib.escape(row[3])
+                    date = html_lib.escape(row[4])
+                    text += f"<code>{date}</code> | {action} | {username} → {target}\n"
+
         keyboard = InlineKeyboardMarkup()
         keyboard.add(InlineKeyboardButton("🗑 Очистить логи", callback_data="clear_logs"))
         keyboard.add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
-        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
+
+        # ✅ Используем parse_mode="HTML" вместо Markdown
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
         await callback.answer()
     except Exception as e:
         logging.error(f"❌ logs: {e}")
+        await callback.answer("❌ Ошибка загрузки логов", show_alert=True)
 
 @dp.callback_query_handler(lambda c: c.data == "clear_logs")
 async def clear_logs_handler(callback: types.CallbackQuery):
