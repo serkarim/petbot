@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 import logging
 from datetime import datetime, timedelta
 import os
