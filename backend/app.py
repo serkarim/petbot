@@ -45,15 +45,15 @@ def get_msk_time():
     return datetime.now(pytz.timezone("Europe/Moscow"))
 
 
-# Проверка Telegram initData
 def validate_telegram_data(init_data: str) -> dict:
+    """Проверяет подлинность данных от Telegram"""
     try:
         data = {}
         for pair in init_data.split("&"):
             key, value = pair.split("=", 1)
             data[key] = value
 
-        if "hash" not in
+        if "hash" not in data:
             return None
 
         received_hash = data.pop("hash")
@@ -66,15 +66,13 @@ def validate_telegram_data(init_data: str) -> dict:
         if calculated_hash != received_hash:
             return None
 
-        if "user" in
+        if "user" in data:
             data["user"] = json.loads(data["user"])
 
         return data
     except Exception as e:
         logger.error(f"Validate error: {e}")
         return None
-
-
 # Вспомогательные функции
 def find_member_by_tg_id(tg_id):
     ws = sheet.worksheet("участники клана")
@@ -222,7 +220,7 @@ async def auth(request: Request):
         init_data = data.get("initData", "")
 
         user_data = validate_telegram_data(init_data)
-        if not user_data or "user" not in user_
+        if not user_data or "user" not in user_data:
             raise HTTPException(status_code=401, detail="Invalid Telegram data")
 
         user_id = user_data["user"]["id"]
@@ -493,7 +491,7 @@ async def get_roles_api():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-if __name__ == "__main__":
-    import uvicorn
-
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+# if __name__ == "__main__":
+#     import uvicorn
+#
+#     uvicorn.run(app, host="0.0.0.0", port=8000)
