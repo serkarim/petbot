@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PET Clan Mini App</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Загрузка -->
+        <div id="loading-page" class="page active">
+            <div class="loading-spinner"></div>
+            <p>Загрузка...</p>
+        </div>
+
+        <!-- Главная -->
+        <div id="home-page" class="page">
+            <h1>🎮 Клан PET</h1>
+            <div id="user-info"></div>
+            <nav class="main-nav">
+                <button onclick="navigate('profile')">👤 Профиль</button>
+                <button onclick="navigate('clan_list')">📋 Клан</button>
+                <button onclick="navigate('stats')">📊 Статистика</button>
+                <button id="admin-btn" onclick="navigate('admin')" style="display:none">🛡 Админ</button>
+            </nav>
+        </div>
+
+        <!-- Профиль -->
+        <div id="profile-page" class="page">
+            <h2>👤 Мой профиль</h2>
+            <div id="profile-data"></div>
+            <button onclick="navigate('home')">🔙 Назад</button>
+        </div>
+
+        <!-- Список клана -->
+        <div id="clan_list-page" class="page">
+            <h2>📋 Участники клана</h2>
+            <div id="clan-members"></div>
+            <button onclick="navigate('home')">🔙 Назад</button>
+        </div>
+
+        <!-- Действия с участником -->
+        <div id="member_actions-page" class="page">
+            <h2 id="member-actions-title">Действия</h2>
+            <div id="member-info-display"></div>
+
+            <h3>👏 Похвала</h3>
+            <textarea id="praise-reason" placeholder="За что похвала?"></textarea>
+            <button onclick="sendPraise()">Отправить похвалу</button>
+
+            <h3>⚖ Жалоба</h3>
+            <textarea id="complaint-reason" placeholder="Причина жалобы"></textarea>
+            <button onclick="sendComplaint()">Отправить жалобу</button>
+
+            <div id="admin-actions" style="display:none">
+                <h3>⚠ Предупреждение</h3>
+                <textarea id="pred-reason" placeholder="Причина предупреждения"></textarea>
+                <button onclick="sendPred()" class="admin-btn">Выдать пред</button>
+            </div>
+
+            <button onclick="navigate('clan_list')">🔙 Назад</button>
+        </div>
+
+        <!-- Статистика -->
+        <div id="stats-page" class="page">
+            <h2>📊 Статистика</h2>
+            <div class="stats-buttons">
+                <button onclick="loadStats('week')">За неделю</button>
+                <button onclick="loadStats('all')">За всё время</button>
+            </div>
+            <div id="stats-data"></div>
+            <button onclick="navigate('home')">🔙 Назад</button>
+        </div>
+
+        <!-- Админ панель -->
+        <div id="admin-page" class="page">
+            <h2>🛡 Админ панель</h2>
+            <nav class="admin-nav">
+                <button onclick="loadApplications()">📬 Заявки</button>
+                <button onclick="loadLogs()">📝 Логи</button>
+                <button onclick="loadComplaints()">⚖ Жалобы</button>
+                <button onclick="loadRoles()">🎖 Разряды</button>
+            </nav>
+            <div id="admin-data"></div>
+            <button onclick="navigate('home')">🔙 Назад</button>
+        </div>
+
+        <!-- Жалобы (админы) -->
+        <div id="complaints-page" class="page">
+            <h2>⚖ Жалобы</h2>
+            <div id="complaints-data"></div>
+            <button onclick="navigate('admin')">🔙 Назад</button>
+        </div>
+
+        <!-- Логи (админы) -->
+        <div id="logs-page" class="page">
+            <h2>📝 Логи</h2>
+            <div id="logs-data"></div>
+            <button onclick="navigate('admin')">🔙 Назад</button>
+        </div>
+
+        <!-- Заявки (админы) -->
+        <div id="applications-page" class="page">
+            <h2>📬 Заявки</h2>
+            <div id="applications-data"></div>
+            <button onclick="navigate('admin')">🔙 Назад</button>
+        </div>
+
+        <!-- Разряды (админы) -->
+        <div id="roles-page" class="page">
+            <h2>🎖 Разряды</h2>
+            <div id="roles-data"></div>
+            <button onclick="navigate('admin')">🔙 Назад</button>
+        </div>
+    </div>
+
+    <script src="/js/app.js"></script>
+</body>
+</html>
