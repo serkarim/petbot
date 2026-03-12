@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from datetime import datetime, timedelta
 import logging
 import pytz
-
+from urllib.parse import unquote
 load_dotenv()
 
 app = FastAPI(title="PET Clan Mini App")
@@ -45,33 +45,39 @@ def get_msk_time():
     return datetime.now(pytz.timezone("Europe/Moscow"))
 
 
-def validate_telegram_data(init_data: str) -> dict:
-    """Проверяет подлинность данных от Telegram"""
+def validate_telegram_data(init_data: str):
     try:
-        data = {}
-        for pair in init_data.split("&"):
-            key, value = pair.split("=", 1)
-            data[key] = value
-
-        if "hash" not in data:
+        token = os.getenv("TOKEN")
+        if not token:
+            logger.error("❌ TOKEN не задан!")
             return None
 
-        received_hash = data.pop("hash")
-        data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(data.items()))
+        data = {}
+        for key, value in [item.split('=', 1) for item in init_data.split('&')]:
+            data[key] = unquote(value)
 
-        token = os.getenv("TOKEN")
+        if 'hash' not in data:
+            logger.error("❌ Нет hash в initData")
+            return None
+
+        received_hash = data.pop('hash')
+        data_check_string = '\n'.join(f"{k}={v}" for k, v in sorted(data.items()))
+
         secret_key = hmac.new(b"WebAppData", token.encode(), hashlib.sha256).digest()
         calculated_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
 
         if calculated_hash != received_hash:
+            logger.error(f"❌ Hash не совпадает!")
             return None
 
-        if "user" in data:
-            data["user"] = json.loads(data["user"])
+        if 'user' not in data:
+            return None
 
-        return data
+        user_data = json.loads(data['user'])
+        return user_data
+
     except Exception as e:
-        logger.error(f"Validate error: {e}")
+        logger.error(f"❌ Ошибка валидации: {e}")
         return None
 # Вспомогательные функции
 def find_member_by_tg_id(tg_id):
@@ -493,5 +499,4 @@ async def get_roles_api():
 
 # if __name__ == "__main__":
 #     import uvicorn
-#
-#     uvicorn.run(app, host="0.0.0.0", port=8000)
+

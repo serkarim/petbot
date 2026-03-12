@@ -2,62 +2,69 @@
 import os
 import asyncio
 import logging
+import threading
 from aiogram.utils.executor import start_polling
 import uvicorn
 
 # Импортируем бота и диспетчер из bot.py
-from bot import dp, on_startup, on_shutdown, bot
-
-# Импортируем FastAPI приложение
-from backend.app import app as fastapi_app
+from bot import bot, dp, on_startup, on_shutdown
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-async def run_bot():
-    """Запускает Telegram бота"""
-    logger.info("🤖 Запуск бота...")
+def run_bot():
+    """Запускает бота в отдельном потоке с собственным event loop"""
+    logger.info("🤖 Запуск бота в потоке...")
+
+    # Создаём новый event loop для этого потока
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
     try:
-        await start_polling(dp, skip_updates=True, on_startup=on_startup, on_shutdown=on_shutdown)
+        # Запускаем polling в этом loop
+        loop.run_until_complete(
+            start_polling(dp, skip_updates=True, on_startup=on_startup, on_shutdown=on_shutdown)
+        )
     except Exception as e:
         logger.error(f"❌ Ошибка бота: {e}")
+    finally:
+        loop.close()
 
 
 async def run_api():
-    """Запускает FastAPI сервер для Mini App"""
+    """Запускает FastAPI сервер"""
     port = int(os.getenv("PORT", 8000))
     logger.info(f"🌐 Запуск API на порту {port}...")
+
+    # Импортируем здесь, чтобы избежать циклических импортов
+    from backend.app import app as fastapi_app
+
     config = uvicorn.Config(
         fastapi_app,
         host="0.0.0.0",
         port=port,
-        log_level="info"
+        log_level="info",
+        loop="asyncio"
     )
     server = uvicorn.Server(config)
     await server.serve()
 
 
-async def main():
-    """Запускает оба процесса параллельно"""
+def main():
+    """Точка входа"""
     logger.info("🚀 Запуск PET Bot + Mini App...")
 
-    # Создаём задачи
-    bot_task = asyncio.create_task(run_bot())
-    api_task = asyncio.create_task(run_api())
+    # Запускаем бота в отдельном потоке
+    bot_thread = threading.Thread(target=run_bot, daemon=True)
+    bot_thread.start()
 
-    # Ждём завершения любой из задач (если одна упадёт — перезапустим)
-    done, pending = await asyncio.wait(
-        [bot_task, api_task],
-        return_when=asyncio.FIRST_COMPLETED
-    )
-
-    # Отменяем оставшиеся задачи
-    for task in pending:
-        task.cancel()
-
-    logger.warning("⚠️ Один из процессов завершён")
+    # Запускаем API в главном потоке (для Railway)
+    try:
+        asyncio.run(run_api())
+    except KeyboardInterrupt:
+        logger.info("🛑 Остановка...")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

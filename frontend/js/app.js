@@ -6,12 +6,17 @@ let currentUser = null;
 let isAdmin = false;
 let isRegistered = false;
 let userNickname = null;
-let selectedMember = null;
 
 // Инициализация
 async function init() {
     try {
-        const initData = tg.initData;
+        const initData = tg.initData || '';
+
+        // Если initData пустой (тестирование в браузере)
+        if (!initData) {
+            tg.showAlert('⚠️ Mini App работает только внутри Telegram!\n\nОткройте через бота @petclanbot');
+            return;
+        }
 
         const response = await fetch('/api/auth', {
             method: 'POST',
@@ -20,7 +25,8 @@ async function init() {
         });
 
         if (!response.ok) {
-            throw new Error('Auth failed');
+            const errorData = await response.json().catch(() => ({detail: 'Unknown error'}));
+            throw new Error(errorData.detail || `HTTP ${response.status}`);
         }
 
         const data = await response.json();
@@ -29,6 +35,10 @@ async function init() {
         isRegistered = data.is_registered;
         userNickname = data.nickname;
 
+        // Настройка темы Telegram
+        tg.MainButton.setParams({color: tg.themeParams.button_color || '#3390ec'});
+        tg.setHeaderColor(tg.themeParams.bg_color || '#1a1a2e');
+
         showPage('home-page');
         renderUserInfo();
 
@@ -36,12 +46,14 @@ async function init() {
             document.getElementById('admin-btn').style.display = 'block';
         }
 
+        // Анимация появления
+        document.body.classList.add('loaded');
+
     } catch (error) {
         console.error('Auth error:', error);
-        tg.showAlert('Ошибка авторизации: ' + error.message);
+        tg.showAlert(`❌ Ошибка авторизации:\n${error.message}\n\nПопробуйте перезапустить бота.`);
     }
 }
-
 // Навигация
 function navigate(page) {
     showPage(page + '-page');

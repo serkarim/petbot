@@ -1,121 +1,395 @@
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PET Clan Mini App</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/css/style.css">
-</head>
-<body>
-    <div id="app">
-        <!-- Загрузка -->
-        <div id="loading-page" class="page active">
-            <div class="loading-spinner"></div>
-            <p>Загрузка...</p>
-        </div>
+/* 🎨 GLOBAL STYLES */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
 
-        <!-- Главная -->
-        <div id="home-page" class="page">
-            <h1>🎮 Клан PET</h1>
-            <div id="user-info"></div>
-            <nav class="main-nav">
-                <button onclick="navigate('profile')">👤 Профиль</button>
-                <button onclick="navigate('clan_list')">📋 Клан</button>
-                <button onclick="navigate('stats')">📊 Статистика</button>
-                <button id="admin-btn" onclick="navigate('admin')" style="display:none">🛡 Админ</button>
-            </nav>
-        </div>
+:root {
+    --primary-color: #667eea;
+    --secondary-color: #764ba2;
+    --accent-color: #f093fb;
+    --bg-dark: #0f0c29;
+    --bg-medium: #302b63;
+    --bg-light: #24243e;
+    --text-primary: #ffffff;
+    --text-secondary: #b8b8d1;
+    --success: #00d2ff;
+    --warning: #ffd700;
+    --danger: #ff416c;
+    --card-bg: rgba(255, 255, 255, 0.05);
+    --card-border: rgba(255, 255, 255, 0.1);
+}
 
-        <!-- Профиль -->
-        <div id="profile-page" class="page">
-            <h2>👤 Мой профиль</h2>
-            <div id="profile-data"></div>
-            <button onclick="navigate('home')">🔙 Назад</button>
-        </div>
+body {
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+    background: linear-gradient(135deg, var(--bg-dark) 0%, var(--bg-medium) 50%, var(--bg-light) 100%);
+    color: var(--text-primary);
+    min-height: 100vh;
+    overflow-x: hidden;
+    position: relative;
+}
 
-        <!-- Список клана -->
-        <div id="clan_list-page" class="page">
-            <h2>📋 Участники клана</h2>
-            <div id="clan-members"></div>
-            <button onclick="navigate('home')">🔙 Назад</button>
-        </div>
+/* 🌟 ANIMATED BACKGROUND */
+body::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: 
+        radial-gradient(circle at 20% 50%, rgba(102, 126, 234, 0.15) 0%, transparent 50%),
+        radial-gradient(circle at 80% 80%, rgba(118, 75, 162, 0.15) 0%, transparent 50%),
+        radial-gradient(circle at 40% 20%, rgba(240, 147, 251, 0.1) 0%, transparent 50%);
+    pointer-events: none;
+    z-index: -1;
+    animation: bgPulse 8s ease-in-out infinite;
+}
 
-        <!-- Действия с участником -->
-        <div id="member_actions-page" class="page">
-            <h2 id="member-actions-title">Действия</h2>
-            <div id="member-info-display"></div>
+@keyframes bgPulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.8; transform: scale(1.05); }
+}
 
-            <h3>👏 Похвала</h3>
-            <textarea id="praise-reason" placeholder="За что похвала?"></textarea>
-            <button onclick="sendPraise()">Отправить похвалу</button>
+/* ✨ PAGE ANIMATIONS */
+.page {
+    display: none;
+    opacity: 0;
+    transform: translateY(20px);
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    padding: 20px;
+}
 
-            <h3>⚖ Жалоба</h3>
-            <textarea id="complaint-reason" placeholder="Причина жалобы"></textarea>
-            <button onclick="sendComplaint()">Отправить жалобу</button>
+.page.active {
+    display: block;
+    opacity: 1;
+    transform: translateY(0);
+}
 
-            <div id="admin-actions" style="display:none">
-                <h3>⚠ Предупреждение</h3>
-                <textarea id="pred-reason" placeholder="Причина предупреждения"></textarea>
-                <button onclick="sendPred()" class="admin-btn">Выдать пред</button>
-            </div>
+body.loaded .page.active {
+    animation: slideUp 0.5s ease-out;
+}
 
-            <button onclick="navigate('clan_list')">🔙 Назад</button>
-        </div>
+@keyframes slideUp {
+    from {
+        opacity: 0;
+        transform: translateY(30px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
 
-        <!-- Статистика -->
-        <div id="stats-page" class="page">
-            <h2>📊 Статистика</h2>
-            <div class="stats-buttons">
-                <button onclick="loadStats('week')">За неделю</button>
-                <button onclick="loadStats('all')">За всё время</button>
-            </div>
-            <div id="stats-data"></div>
-            <button onclick="navigate('home')">🔙 Назад</button>
-        </div>
+/* 🎯 LOADING SPINNER */
+.loading-spinner {
+    width: 60px;
+    height: 60px;
+    border: 4px solid rgba(255, 255, 255, 0.1);
+    border-top: 4px solid var(--primary-color);
+    border-radius: 50%;
+    margin: 100px auto;
+    animation: spin 1s linear infinite;
+    box-shadow: 0 0 20px rgba(102, 126, 234, 0.5);
+}
 
-        <!-- Админ панель -->
-        <div id="admin-page" class="page">
-            <h2>🛡 Админ панель</h2>
-            <nav class="admin-nav">
-                <button onclick="loadApplications()">📬 Заявки</button>
-                <button onclick="loadLogs()">📝 Логи</button>
-                <button onclick="loadComplaints()">⚖ Жалобы</button>
-                <button onclick="loadRoles()">🎖 Разряды</button>
-            </nav>
-            <div id="admin-data"></div>
-            <button onclick="navigate('home')">🔙 Назад</button>
-        </div>
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
 
-        <!-- Жалобы (админы) -->
-        <div id="complaints-page" class="page">
-            <h2>⚖ Жалобы</h2>
-            <div id="complaints-data"></div>
-            <button onclick="navigate('admin')">🔙 Назад</button>
-        </div>
+/* 🎨 HEADERS */
+h1 {
+    font-size: 32px;
+    font-weight: 700;
+    text-align: center;
+    margin-bottom: 30px;
+    background: linear-gradient(135deg, var(--primary-color), var(--accent-color));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    text-shadow: 0 0 30px rgba(102, 126, 234, 0.3);
+    animation: glow 2s ease-in-out infinite;
+}
 
-        <!-- Логи (админы) -->
-        <div id="logs-page" class="page">
-            <h2>📝 Логи</h2>
-            <div id="logs-data"></div>
-            <button onclick="navigate('admin')">🔙 Назад</button>
-        </div>
+@keyframes glow {
+    0%, 100% { filter: brightness(1); }
+    50% { filter: brightness(1.2); }
+}
 
-        <!-- Заявки (админы) -->
-        <div id="applications-page" class="page">
-            <h2>📬 Заявки</h2>
-            <div id="applications-data"></div>
-            <button onclick="navigate('admin')">🔙 Назад</button>
-        </div>
+h2 {
+    font-size: 24px;
+    font-weight: 600;
+    margin-bottom: 20px;
+    color: var(--text-primary);
+}
 
-        <!-- Разряды (админы) -->
-        <div id="roles-page" class="page">
-            <h2>🎖 Разряды</h2>
-            <div id="roles-data"></div>
-            <button onclick="navigate('admin')">🔙 Назад</button>
-        </div>
-    </div>
+h3 {
+    font-size: 18px;
+    font-weight: 500;
+    margin: 20px 0 10px;
+    color: var(--text-secondary);
+}
 
-    <script src="/js/app.js"></script>
-</body>
-</html>
+/* 🎮 CARDS */
+.card {
+    background: var(--card-bg);
+    backdrop-filter: blur(10px);
+    border: 1px solid var(--card-border);
+    border-radius: 16px;
+    padding: 20px;
+    margin: 15px 0;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 12px 40px rgba(102, 126, 234, 0.3);
+    border-color: rgba(102, 126, 234, 0.3);
+}
+
+.card p {
+    margin: 8px 0;
+    color: var(--text-secondary);
+    line-height: 1.6;
+}
+
+/* 🔘 BUTTONS */
+button {
+    background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+    color: white;
+    border: none;
+    padding: 16px 24px;
+    border-radius: 12px;
+    margin: 8px 0;
+    cursor: pointer;
+    width: 100%;
+    font-size: 16px;
+    font-weight: 600;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+    position: relative;
+    overflow: hidden;
+}
+
+button::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+    transition: left 0.5s;
+}
+
+button:hover::before {
+    left: 100%;
+}
+
+button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(102, 126, 234, 0.6);
+}
+
+button:active {
+    transform: translateY(0);
+}
+
+/* 🎨 NAVIGATION */
+.main-nav, .admin-nav, .stats-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin: 25px 0;
+}
+
+/* 🏷️ BADGES */
+.status-badge, .role-badge {
+    display: inline-block;
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    margin: 2px;
+    animation: badgePulse 2s ease-in-out infinite;
+}
+
+.role-badge {
+    background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+    color: white;
+    box-shadow: 0 2px 10px rgba(102, 126, 234, 0.4);
+}
+
+.status-waiting { 
+    background: linear-gradient(135deg, #ffd700, #ffed4e); 
+    color: #000; 
+}
+.status-accepted { 
+    background: linear-gradient(135deg, #00d2ff, #3a7bd5); 
+    color: white; 
+}
+.status-rejected { 
+    background: linear-gradient(135deg, #ff416c, #ff4b2b); 
+    color: white; 
+}
+.status-active { 
+    background: linear-gradient(135deg, #00d2ff, #3a7bd5); 
+    color: white; 
+}
+
+@keyframes badgePulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.05); }
+}
+
+/* 📝 TEXTAREA */
+textarea {
+    width: 100%;
+    padding: 16px;
+    border: 2px solid var(--card-border);
+    border-radius: 12px;
+    margin: 12px 0;
+    font-size: 14px;
+    font-family: inherit;
+    background: var(--card-bg);
+    color: var(--text-primary);
+    min-height: 100px;
+    resize: vertical;
+    transition: all 0.3s;
+}
+
+textarea:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 20px rgba(102, 126, 234, 0.3);
+}
+
+/*  ERROR/SUCCESS MESSAGES */
+.error-message {
+    background: linear-gradient(135deg, #ff416c, #ff4b2b);
+    color: white;
+    padding: 16px;
+    border-radius: 12px;
+    margin: 15px 0;
+    text-align: center;
+    animation: shake 0.5s;
+    box-shadow: 0 4px 15px rgba(255, 65, 108, 0.4);
+}
+
+@keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-10px); }
+    75% { transform: translateX(10px); }
+}
+
+.success-message {
+    background: linear-gradient(135deg, #00d2ff, #3a7bd5);
+    color: white;
+    padding: 16px;
+    border-radius: 12px;
+    margin: 15px 0;
+    text-align: center;
+    animation: slideIn 0.5s;
+    box-shadow: 0 4px 15px rgba(0, 210, 255, 0.4);
+}
+
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* 🎨 ACTION BUTTONS */
+.action-buttons {
+    display: flex;
+    gap: 10px;
+    margin: 15px 0;
+}
+
+.action-buttons button {
+    flex: 1;
+}
+
+button.admin-btn {
+    background: linear-gradient(135deg, #ff416c, #ff4b2b);
+    box-shadow: 0 4px 15px rgba(255, 65, 108, 0.4);
+}
+
+button.admin-btn:hover {
+    box-shadow: 0 8px 25px rgba(255, 65, 108, 0.6);
+}
+
+/* 📱 RESPONSIVE */
+@media (max-width: 600px) {
+    body {
+        padding: 15px;
+    }
+    
+    h1 {
+        font-size: 28px;
+    }
+    
+    h2 {
+        font-size: 22px;
+    }
+    
+    .card {
+        padding: 16px;
+    }
+    
+    button {
+        padding: 14px 20px;
+        font-size: 15px;
+    }
+}
+
+/* 🌈 SCROLLBAR */
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--bg-dark);
+}
+
+::-webkit-scrollbar-thumb {
+    background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(135deg, var(--secondary-color), var(--primary-color));
+}
+
+/* 🎊 FLOATING PARTICLES (optional) */
+.particle {
+    position: fixed;
+    pointer-events: none;
+    opacity: 0.5;
+    animation: float 10s infinite;
+}
+
+@keyframes float {
+    0%, 100% {
+        transform: translateY(100vh) rotate(0deg);
+        opacity: 0;
+    }
+    10% {
+        opacity: 0.5;
+    }
+    90% {
+        opacity: 0.5;
+    }
+    100% {
+        transform: translateY(-100vh) rotate(720deg);
+        opacity: 0;
+    }
+}
