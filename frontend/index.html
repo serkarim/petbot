@@ -115,7 +115,133 @@
             <button onclick="navigate('admin')">🔙 Назад</button>
         </div>
     </div>
+    <!-- ==================== -->
+<!-- 📢 Оповещения -->
+<!-- ==================== -->
+<div id="notifications-page" class="page">
+    <div class="card">
+        <h2>📢 Оповещения</h2>
+        <button class="btn btn-primary" onclick="showCreateNotification()">+ Создать оповещение</button>
+        <button class="btn" onclick="navigate('admin')">🔙 Назад</button>
+    </div>
+    <div id="notifications-list" class="card"></div>
+</div>
 
+<!-- Создать оповещение -->
+<div id="create-notification-page" class="page">
+    <div class="card">
+        <h2>📢 Новое оповещение</h2>
+
+        <label>Аудитория:</label>
+        <select id="notification-audience">
+            <option value="все">Все участники</option>
+            <option value="сквадной">Сквадные</option>
+            <option value="пех">Пехота</option>
+            <option value="тех">Техники</option>
+            <option value="админы">Админы</option>
+            <option value="техадмины">Тех админы + Админы</option>
+        </select>
+
+        <label>Текст оповещения:</label>
+        <textarea id="notification-text" rows="4" placeholder="Введите текст..."></textarea>
+
+        <label>Когда отправить:</label>
+        <select id="notification-schedule" onchange="toggleScheduleTime()">
+            <option value="now">Сейчас</option>
+            <option value="schedule">Запланировать</option>
+        </select>
+
+        <div id="schedule-time-container" style="display:none;">
+            <label>Дата и время:</label>
+            <input type="datetime-local" id="notification-datetime">
+        </div>
+
+        <button class="btn btn-primary" onclick="sendNotification()">📤 Отправить</button>
+        <button class="btn" onclick="navigate('notifications')">🔙 Назад</button>
+    </div>
+</div>
+
+<!-- ==================== -->
+<!-- 📝 Devlogs (Тех админы) -->
+<!-- ==================== -->
+<div id="devlogs-page" class="page">
+    <div class="card">
+        <h2>📝 Devlogs</h2>
+        <button class="btn btn-primary" onclick="showCreateDevlog()">+ Новый devlog</button>
+        <button class="btn" onclick="navigate('admin')">🔙 Назад</button>
+    </div>
+    <div id="devlogs-list" class="card"></div>
+</div>
+
+<div id="create-devlog-page" class="page">
+    <div class="card">
+        <h2>📝 Новый Devlog</h2>
+
+        <label>Заголовок:</label>
+        <input type="text" id="devlog-title" placeholder="Например: Обновление #23">
+
+        <label>Содержание:</label>
+        <textarea id="devlog-content" rows="6" placeholder="Опишите изменения..."></textarea>
+
+        <button class="btn btn-primary" onclick="sendDevlog()">📤 Опубликовать</button>
+        <button class="btn" onclick="navigate('devlogs')">🔙 Назад</button>
+    </div>
+</div>
+
+<!-- ==================== -->
+<!-- 🏆 Массовая похвала -->
+<!-- ==================== -->
+<div id="bulk-praise-page" class="page">
+    <div class="card">
+        <h2>🏆 Массовая похвала</h2>
+        <p>Выберите участников для похвалы:</p>
+        <button class="btn" onclick="selectAllMembers()">✅ Выбрать всех</button>
+        <button class="btn" onclick="clearSelection()">❌ Сбросить</button>
+        <p id="bulk-selected-count">Выбрано: 0</p>
+    </div>
+    <div id="bulk-members-list" class="card"></div>
+    <div class="card">
+        <label>Название ивента:</label>
+        <input type="text" id="bulk-event-name" placeholder="Например: Турнир">
+
+        <label>Причина:</label>
+        <textarea id="bulk-praise-reason" rows="3" placeholder="За активное участие..."></textarea>
+
+        <button class="btn btn-primary" onclick="sendBulkPraise()">📤 Выдать похвалу</button>
+        <button class="btn" onclick="navigate('admin')">🔙 Назад</button>
+    </div>
+</div>
+
+<!-- ==================== -->
+<!-- 📋 История участника (админы) -->
+<!-- ==================== -->
+<div id="member-history-page" class="page">
+    <div class="card">
+        <h2 id="member-history-title">📋 История участника</h2>
+        <div id="member-history-tabs">
+            <button class="btn" onclick="showMemberHistory('praise')">👏 Похвалы</button>
+            <button class="btn" onclick="showMemberHistory('preds')">⚠ Предупреждения</button>
+        </div>
+        <button class="btn" onclick="navigate('clan_list')">🔙 Назад</button>
+    </div>
+    <div id="member-history-data" class="card"></div>
+</div>
+
+<!-- ==================== -->
+<!-- 🎖 Смена разряда -->
+<!-- ==================== -->
+<div id="change-role-page" class="page">
+    <div class="card">
+        <h2>🎖 Смена разряда</h2>
+        <p id="change-role-member"></p>
+
+        <label>Новый разряд:</label>
+        <select id="new-role-select"></select>
+
+        <button class="btn btn-primary" onclick="confirmChangeRole()">✅ Изменить</button>
+        <button class="btn" onclick="navigate('clan_list')">🔙 Назад</button>
+    </div>
+</div>
     <script src="/js/app.js"></script>
 <!-- Floating Particles -->
 <script>
