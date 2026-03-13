@@ -4,18 +4,23 @@ tg.expand();
 
 let currentUser = null;
 let isAdmin = false;
+let isTechAdmin = false;
 let isRegistered = false;
 let userNickname = null;
-let isTechAdmin = false;
+let selectedMember = null;
 let selectedBulkMembers = [];
 let currentHistoryMember = null;
 let currentRoleChangeMember = null;
-// Инициализация
+
+// =========================
+// 🚀 ИНИЦИАЛИЗАЦИЯ
+// =========================
 async function init() {
     try {
         const initData = tg.initData || '';
+
         if (!initData) {
-            tg.showAlert('⚠️ Mini App работает только внутри Telegram!');
+            tg.showAlert('⚠️ Mini App работает только внутри Telegram!\n\nОткройте через бота');
             return;
         }
 
@@ -25,16 +30,17 @@ async function init() {
             body: JSON.stringify({initData})
         });
 
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({detail: 'Unknown error'}));
+            throw new Error(errorData.detail || `HTTP ${response.status}`);
+        }
+
         const data = await response.json();
         currentUser = data.user;
         isAdmin = data.is_admin;
+        isTechAdmin = data.is_tech_admin;
         isRegistered = data.is_registered;
         userNickname = data.nickname;
-
-        // 🔥 Проверка тех админа
-        const techAdminResponse = await fetch(`/api/is_tech_admin/${currentUser.id}`);
-        const techAdminData = await techAdminResponse.json();
-        isTechAdmin = techAdminData.is_tech_admin;
 
         tg.MainButton.setParams({color: tg.themeParams.button_color || '#3390ec'});
         tg.setHeaderColor(tg.themeParams.bg_color || '#1a1a2e');
@@ -47,11 +53,16 @@ async function init() {
         }
 
         document.body.classList.add('loaded');
+
     } catch (error) {
-        tg.showAlert(`❌ Ошибка авторизации: ${error.message}`);
+        console.error('Auth error:', error);
+        tg.showAlert(`❌ Ошибка авторизации:\n${error.message}`);
     }
 }
-// Навигация
+
+// =========================
+// 🧭 НАВИГАЦИЯ
+// =========================
 function navigate(page) {
     showPage(page + '-page');
 
@@ -61,88 +72,96 @@ function navigate(page) {
         loadClanList();
     } else if (page === 'stats') {
         loadStats('week');
-    } else if (page === 'admin' && isAdmin) {
+    } else if (page === 'admin' && (isAdmin || isTechAdmin)) {
         renderAdminMenu();
+    } else if (page === 'notifications') {
+        loadNotifications();
+    } else if (page === 'devlogs') {
+        loadDevlogs();
     }
 }
 
 function showPage(pageId) {
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-    document.getElementById(pageId).classList.add('active');
+    const page = document.getElementById(pageId);
+    if (page) {
+        page.classList.add('active');
+    }
 }
 
-// Рендер информации о пользователе
+// =========================
+// 👤 ПРОФИЛЬ
+// =========================
 function renderUserInfo() {
     const userInfo = document.getElementById('user-info');
+    if (!userInfo) return;
+
     userInfo.innerHTML = `
-        <div class="card">
-            <p>👤 <b>${currentUser.first_name} ${currentUser.last_name || ''}</b></p>
-            <p>@${currentUser.username || 'Нет username'}</p>
-            <p>${isRegistered ? '✅ Зарегистрирован' : '⏳ Не зарегистрирован'}</p>
-            ${userNickname ? `<p>🎮 Ник: <b>${userNickname}</b></p>` : ''}
-            ${isAdmin ? '<p>🛡 <b>Администратор</b></p>' : ''}
-        </div>
+        <p>👤 <strong>${currentUser.first_name} ${currentUser.last_name || ''}</strong></p>
+        <p>@${currentUser.username || 'Нет username'}</p>
+        <p>${isRegistered ? '✅ Зарегистрирован' : '⏳ Не зарегистрирован'}</p>
+        ${userNickname ? `<p>🎮 Ник: <strong>${userNickname}</strong></p>` : ''}
+        ${isAdmin ? '<p>🛡 <strong>Администратор</strong></p>' : ''}
+        ${isTechAdmin && !isAdmin ? '<p>🔧 <strong>Тех Админ</strong></p>' : ''}
     `;
 }
 
-// Загрузка профиля
 async function loadProfile() {
     try {
         const response = await fetch(`/api/profile/${currentUser.id}`);
         const data = await response.json();
 
         document.getElementById('profile-data').innerHTML = `
-            <div class="card">
-                <p>🎮 <b>${data.nick}</b></p>
-                <p>🆔 <code>${data.steam_id}</code></p>
-                <p>🎖 Роль: <span class="role-badge">${data.role}</span></p>
-                <p>⚠️ Предупреждения: ${data.warns}</p>
-                <p>👏 Похвалы: ${data.praises}</p>
-                <p>📊 Рейтинг: ${data.score}</p>
-                <p>📌 Статус: ${data.desirable}</p>
-            </div>
+            <p>🎮 <strong>${data.nick}</strong></p>
+            <p>🆔 ${data.steam_id}</p>
+            <p>🎖 Роль: ${data.role}</p>
+            <p>⚠️ Предупреждения: ${data.warns}</p>
+            <p>👏 Похвалы: ${data.praises}</p>
+            <p>📊 Рейтинг: ${data.score}</p>
+            <p>📌 Статус: ${data.desirable}</p>
         `;
     } catch (error) {
-        document.getElementById('profile-data').innerHTML = '<div class="error-message">❌ Ошибка загрузки профиля</div>';
+        document.getElementById('profile-data').innerHTML = '<p class="error-message">❌ Ошибка загрузки профиля</p>';
     }
 }
 
-// Загрузка списка клана
+// =========================
+// 📋 СПИСОК КЛАНА (🔥 ИСПРАВЛЕНО)
+// =========================
 async function loadClanList() {
     try {
         const response = await fetch('/api/clan_members');
         const data = await response.json();
 
+        if (!data.members || data.members.length === 0) {
+            document.getElementById('clan-members').innerHTML = '<p class="empty-message">📭 Список пуст</p>';
+            return;
+        }
+
+        // 🔥 ИСПРАВЛЕНИЕ: добавляем onclick для каждого участника
         document.getElementById('clan-members').innerHTML = data.members
-            .map(m => `<div class="card" onclick="selectMember('${m.replace(/'/g, "\\'")}')">${m}</div>`)
+            .map(m => `
+                <div class="member-item" onclick="selectMember('${m.replace(/'/g, "\\'")}')">
+                    <span class="member-name">👤 ${m}</span>
+                    <span class="member-arrow">›</span>
+                </div>
+            `)
             .join('');
     } catch (error) {
-        document.getElementById('clan-members').innerHTML = '<div class="error-message">❌ Ошибка загрузки</div>';
+        document.getElementById('clan-members').innerHTML = '<p class="error-message">❌ Ошибка загрузки</p>';
     }
 }
 
-// =========================
-// 🔄 ОБНОВЛЁННЫЙ CLAN LIST
-// =========================
 function selectMember(member) {
     selectedMember = member;
     document.getElementById('member-actions-title').innerText = `Действия: ${member}`;
     document.getElementById('member-info-display').innerHTML = `<p>👤 <strong>${member}</strong></p>`;
 
-    let adminButtons = '';
     if (isAdmin) {
-        adminButtons = `
-            <button class="btn" onclick="showMemberHistoryPage('${member}')">📋 История</button>
-            <button class="btn" onclick="showChangeRolePage('${member}')">🎖 Сменить разряд</button>
-        `;
+        document.getElementById('admin-actions').style.display = 'block';
+    } else {
+        document.getElementById('admin-actions').style.display = 'none';
     }
-
-    document.getElementById('admin-actions').innerHTML = `
-        ${adminButtons}
-        <div id="admin-actions-original">
-            <button class="btn btn-warning" onclick="showPage('pred-page')">⚠ Предупреждение</button>
-        </div>
-    `;
 
     document.getElementById('praise-reason').value = '';
     document.getElementById('complaint-reason').value = '';
@@ -150,7 +169,10 @@ function selectMember(member) {
 
     showPage('member_actions-page');
 }
-// Отправка похвалы
+
+// =========================
+// 👏 ПОХВАЛА
+// =========================
 async function sendPraise() {
     const reason = document.getElementById('praise-reason').value.trim();
 
@@ -180,7 +202,9 @@ async function sendPraise() {
     }
 }
 
-// Отправка жалобы
+// =========================
+// ⚖ ЖАЛОБА
+// =========================
 async function sendComplaint() {
     const reason = document.getElementById('complaint-reason').value.trim();
 
@@ -210,7 +234,9 @@ async function sendComplaint() {
     }
 }
 
-// Выдача преда (админы)
+// =========================
+// ⚠ ПРЕДУПРЕЖДЕНИЕ
+// =========================
 async function sendPred() {
     const reason = document.getElementById('pred-reason').value.trim();
 
@@ -240,187 +266,63 @@ async function sendPred() {
     }
 }
 
-// Загрузка статистики
+// =========================
+// 📊 СТАТИСТИКА
+// =========================
 async function loadStats(period) {
     try {
         const response = await fetch(`/api/stats/${period}`);
         const data = await response.json();
 
         if (data.top.length === 0) {
-            document.getElementById('stats-data').innerHTML = '<div class="card">📭 Пока нет похвал</div>';
+            document.getElementById('stats-data').innerHTML = '<p class="empty-message">📭 Пока нет похвал</p>';
         } else {
             document.getElementById('stats-data').innerHTML = data.top
-                .map((t, i) => `<div class="card"><b>${i+1}. ${t.nick}</b> — ${t.count} 👏</div>`)
+                .map((t, i) => `<p><strong>${i+1}. ${t.nick}</strong> — ${t.count} 👏</p>`)
                 .join('');
         }
     } catch (error) {
-        document.getElementById('stats-data').innerHTML = '<div class="error-message">❌ Ошибка загрузки</div>';
+        document.getElementById('stats-data').innerHTML = '<p class="error-message">❌ Ошибка загрузки</p>';
     }
 }
 
 // =========================
-// 🔄 ОБНОВЛЁННЫЙ ADMIN MENU
+// 🛡 АДМИН МЕНЮ (🔥 ОБНОВЛЕНО)
 // =========================
 function renderAdminMenu() {
     let techAdminButtons = '';
     if (isTechAdmin) {
         techAdminButtons = `
-
+            <button class="btn btn-primary" onclick="loadNotifications()">📢 Оповещения</button>
             <button class="btn btn-primary" onclick="loadDevlogs()">📝 Devlogs</button>
+        `;
+    }
+
+    let adminButtons = '';
+    if (isAdmin) {
+        adminButtons = `
+            <button class="btn btn-primary" onclick="showBulkPraise()">🏆 Массовая похвала</button>
+            <button class="btn" onclick="loadComplaints()">⚖ Жалобы</button>
         `;
     }
 
     document.getElementById('admin-data').innerHTML = `
         ${techAdminButtons}
-        <button class="btn btn-primary" onclick="showBulkPraise()">🏆 Массовая похвала</button>
-        <button class="btn" onclick="loadComplaints()">⚖ Жалобы</button>
+        ${adminButtons}
         <button class="btn" onclick="loadLogs()">📝 Логи</button>
         <button class="btn" onclick="loadApplications()">📬 Заявки</button>
-        <button class="btn btn-primary" onclick="loadNotifications()">📢 Оповещения</button>
     `;
 }
 
-
-// Загрузка заявок
-async function loadApplications() {
-    showPage('applications-page');
-    try {
-        const response = await fetch(`/api/applications?user_id=${currentUser.id}`);
-        const data = await response.json();
-
-        if (data.applications.length === 0) {
-            document.getElementById('applications-data').innerHTML = '<div class="card">📭 Нет заявок</div>';
-        } else {
-            document.getElementById('applications-data').innerHTML = data.applications
-                .map(a => `
-                    <div class="card">
-                        <p><b>📬 #${a.id}</b> | ${a.nick}</p>
-                        <p>🆔 ${a.steam_id}</p>
-                        <p>👤 ${a.tg_username}</p>
-                        <p>🕒 ${a.date}</p>
-                        <p><span class="status-badge status-${a.status === 'ожидает' ? 'waiting' : a.status === 'принят' ? 'accepted' : 'rejected'}">${a.status}</span></p>
-                    </div>
-                `).join('');
-        }
-    } catch (error) {
-        document.getElementById('applications-data').innerHTML = '<div class="error-message">❌ Ошибка загрузки</div>';
-    }
-}
-
-// Загрузка логов
-async function loadLogs() {
-    showPage('logs-page');
-    try {
-        const response = await fetch(`/api/logs?user_id=${currentUser.id}`);
-        const data = await response.json();
-
-        if (data.logs.length === 0) {
-            document.getElementById('logs-data').innerHTML = '<div class="card">📭 Логи пусты</div>';
-        } else {
-            document.getElementById('logs-data').innerHTML = data.logs
-                .map(l => `
-                    <div class="card">
-                        <p><b>${l[4]}</b></p>
-                        <p>${l[0]} | ${l[1]} → ${l[3]}</p>
-                    </div>
-                `).join('');
-        }
-    } catch (error) {
-        document.getElementById('logs-data').innerHTML = '<div class="error-message">❌ Ошибка загрузки</div>';
-    }
-}
-
-// Загрузка жалоб
-async function loadComplaints() {
-    showPage('complaints-page');
-    try {
-        const response = await fetch(`/api/complaints?user_id=${currentUser.id}`);
-        const data = await response.json();
-
-        if (data.complaints.length === 0) {
-            document.getElementById('complaints-data').innerHTML = '<div class="card">📭 Нет активных жалоб</div>';
-        } else {
-            document.getElementById('complaints-data').innerHTML = data.complaints
-                .map(c => `
-                    <div class="card">
-                        <p><b>⚖ Жалоба #${c.index}</b></p>
-                        <p>👤 От: ${c.from_user}</p>
-                        <p>🎯 На: ${c.to_member}</p>
-                        <p>📝 ${c.reason}</p>
-                        <p>🕒 ${c.date}</p>
-                        <p><span class="status-badge status-active">${c.status}</span></p>
-                        <div class="action-buttons">
-                            <button onclick="closeComplaint(${c.index}, 'pred')" class="admin-btn">⚠ Пред + закрыть</button>
-                            <button onclick="closeComplaint(${c.index}, 'noaction')">❌ Закрыть</button>
-                        </div>
-                    </div>
-                `).join('');
-        }
-    } catch (error) {
-        document.getElementById('complaints-data').innerHTML = '<div class="error-message">❌ Ошибка загрузки</div>';
-    }
-}
-
-// Закрытие жалобы
-async function closeComplaint(index, action) {
-    const actionText = action === 'pred' ? 'Пред + закрыть' : 'Закрыть';
-
-    if (!confirm(`Вы уверены, что хотите ${actionText.toLowerCase()} эту жалобу?`)) {
-        return;
-    }
-
-    try {
-        const response = await fetch(`/api/complaint/close?user_id=${currentUser.id}`, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({index: index, action: action})
-        });
-
-        const data = await response.json();
-
-        if (response.ok) {
-            tg.showAlert(data.message);
-            loadComplaints();
-        } else {
-            tg.showAlert('Ошибка: ' + data.detail);
-        }
-    } catch (error) {
-        tg.showAlert('Ошибка: ' + error.message);
-    }
-}
-
-// Загрузка разрядов
-async function loadRoles() {
-    showPage('roles-page');
-    try {
-        const response = await fetch('/api/roles');
-        const data = await response.json();
-
-        document.getElementById('roles-data').innerHTML = `
-            <div class="card">
-                <h3>🪖 Сквадные (${data.сквадной.length})</h3>
-                ${data.сквадной.map(m => `<span class="role-badge">${m}</span>`).join('')}
-            </div>
-            <div class="card">
-                <h3>🎯 Пехи (${data.пех.length})</h3>
-                ${data.пех.map(m => `<span class="role-badge">${m}</span>`).join('')}
-            </div>
-            <div class="card">
-                <h3>🔧 Техи (${data.тех.length})</h3>
-                ${data.тех.map(m => `<span class="role-badge">${m}</span>`).join('')}
-            </div>
-        `;
-    } catch (error) {
-        document.getElementById('roles-data').innerHTML = '<div class="error-message">❌ Ошибка загрузки</div>';
-    }
-}
 // =========================
 // 📢 ОПОВЕЩЕНИЯ
 // =========================
 function toggleScheduleTime() {
     const schedule = document.getElementById('notification-schedule').value;
-    document.getElementById('schedule-time-container').style.display =
-        schedule === 'schedule' ? 'block' : 'none';
+    const container = document.getElementById('schedule-time-container');
+    if (container) {
+        container.style.display = schedule === 'schedule' ? 'block' : 'none';
+    }
 }
 
 function showCreateNotification() {
@@ -444,7 +346,6 @@ async function sendNotification() {
             tg.showAlert('Выберите дату и время');
             return;
         }
-        // Конвертация в формат DD.MM.YYYY HH:MM
         const date = new Date(datetime);
         scheduleTime = date.toLocaleString('ru-RU', {
             day: '2-digit', month: '2-digit', year: 'numeric',
@@ -456,9 +357,7 @@ async function sendNotification() {
         const response = await fetch(`/api/notification?user_id=${currentUser.id}`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                audience, text, schedule_time: scheduleTime
-            })
+            body: JSON.stringify({audience, text, schedule_time: scheduleTime})
         });
 
         const data = await response.json();
@@ -480,16 +379,17 @@ async function loadNotifications() {
         const response = await fetch(`/api/notifications?user_id=${currentUser.id}`);
         const data = await response.json();
 
-        if (data.notifications.length === 0) {
-            document.getElementById('notifications-list').innerHTML = '<p>📭 Нет оповещений</p>';
+        if (!data.notifications || data.notifications.length === 0) {
+            document.getElementById('notifications-list').innerHTML = '<p class="empty-message">📭 Нет оповещений</p>';
         } else {
             document.getElementById('notifications-list').innerHTML = data.notifications
+                .reverse()
                 .map(n => `
-                    <div class="card">
+                    <div class="card notification-card">
                         <p><strong>📢 ${n.audience}</strong></p>
                         <p>${n.text}</p>
                         <p><small>👤 ${n.author} | 🕒 ${n.created} | 📅 ${n.schedule}</small></p>
-                        <p><span class="status-${n.status}">${n.status}</span></p>
+                        <p><span class="status-badge status-${n.status === 'отправлено' ? 'success' : 'warning'}">${n.status}</span></p>
                     </div>
                 `).join('');
         }
@@ -497,6 +397,7 @@ async function loadNotifications() {
         document.getElementById('notifications-list').innerHTML = '<p class="error-message">❌ Ошибка</p>';
     }
 }
+
 // =========================
 // 📝 DEVLOGS
 // =========================
@@ -539,13 +440,13 @@ async function loadDevlogs() {
         const response = await fetch('/api/devlogs');
         const data = await response.json();
 
-        if (data.devlogs.length === 0) {
-            document.getElementById('devlogs-list').innerHTML = '<p>📭 Нет devlogs</p>';
+        if (!data.devlogs || data.devlogs.length === 0) {
+            document.getElementById('devlogs-list').innerHTML = '<p class="empty-message">📭 Нет devlogs</p>';
         } else {
             document.getElementById('devlogs-list').innerHTML = data.devlogs
                 .reverse()
                 .map(d => `
-                    <div class="card">
+                    <div class="card devlog-card">
                         <h3>📝 ${d.title}</h3>
                         <p>${d.content}</p>
                         <p><small>👤 ${d.author} | 🕒 ${d.date}</small></p>
@@ -569,10 +470,16 @@ async function showBulkPraise() {
         const response = await fetch('/api/clan_members');
         const data = await response.json();
 
+        if (!data.members || data.members.length === 0) {
+            document.getElementById('bulk-members-list').innerHTML = '<p class="empty-message">📭 Нет участников</p>';
+            return;
+        }
+
         document.getElementById('bulk-members-list').innerHTML = data.members
             .map(m => `
-                <div class="card selectable-member" onclick="toggleBulkSelect('${m}')">
-                    <span id="bulk-check-${m}">⬜</span> ${m}
+                <div class="card selectable-member" onclick="toggleBulkSelect('${m.replace(/'/g, "\\'")}')">
+                    <span class="checkbox" id="bulk-check-${m.replace(/'/g, '\\-')}">⬜</span>
+                    <span class="member-name">${m}</span>
                 </div>
             `).join('');
     } catch (error) {
@@ -581,8 +488,11 @@ async function showBulkPraise() {
 }
 
 function toggleBulkSelect(member) {
+    const safeId = member.replace(/'/g, '\\-');
     const index = selectedBulkMembers.indexOf(member);
-    const checkbox = document.getElementById(`bulk-check-${member}`);
+    const checkbox = document.getElementById(`bulk-check-${safeId}`);
+
+    if (!checkbox) return;
 
     if (index === -1) {
         selectedBulkMembers.push(member);
@@ -595,26 +505,10 @@ function toggleBulkSelect(member) {
 }
 
 function updateBulkCount() {
-    document.getElementById('bulk-selected-count').innerText = `Выбрано: ${selectedBulkMembers.length}`;
-}
-
-function selectAllMembers() {
-    // Загрузить всех если ещё не загружены
-    const members = document.querySelectorAll('.selectable-member');
-    members.forEach(m => {
-        const name = m.innerText.replace('✅', '').replace('⬜', '').trim();
-        if (!selectedBulkMembers.includes(name)) {
-            selectedBulkMembers.push(name);
-            document.getElementById(`bulk-check-${name}`).innerText = '✅';
-        }
-    });
-    updateBulkCount();
-}
-
-function clearSelection() {
-    selectedBulkMembers = [];
-    document.querySelectorAll('.selectable-member span').forEach(s => s.innerText = '⬜');
-    updateBulkCount();
+    const countEl = document.getElementById('bulk-selected-count');
+    if (countEl) {
+        countEl.innerText = `Выбрано: ${selectedBulkMembers.length}`;
+    }
 }
 
 async function sendBulkPraise() {
@@ -630,11 +524,7 @@ async function sendBulkPraise() {
         const response = await fetch(`/api/bulk_praise?user_id=${currentUser.id}`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                members: selectedBulkMembers,
-                reason,
-                event_name: eventName
-            })
+            body: JSON.stringify({members: selectedBulkMembers, reason, event_name: eventName})
         });
 
         const data = await response.json();
@@ -654,7 +544,10 @@ async function sendBulkPraise() {
 // =========================
 async function showMemberHistoryPage(member) {
     currentHistoryMember = member;
-    document.getElementById('member-history-title').innerText = `📋 ${member}`;
+    const titleEl = document.getElementById('member-history-title');
+    if (titleEl) {
+        titleEl.innerText = `📋 ${member}`;
+    }
     showPage('member-history-page');
     showMemberHistory('praise');
 }
@@ -670,11 +563,11 @@ async function showMemberHistory(type) {
 
         const items = type === 'praise' ? data.praises : data.preds;
 
-        if (items.length === 0) {
-            document.getElementById('member-history-data').innerHTML = '<p>📭 Нет записей</p>';
+        if (!items || items.length === 0) {
+            document.getElementById('member-history-data').innerHTML = '<p class="empty-message">📭 Нет записей</p>';
         } else {
             document.getElementById('member-history-data').innerHTML = items.map(item => `
-                <div class="card">
+                <div class="card history-item">
                     ${type === 'praise' ? `<p>👤 От: ${item.from}</p>` : ''}
                     <p>📝 ${item.reason}</p>
                     <p>🕒 ${item.date}</p>
@@ -691,14 +584,19 @@ async function showMemberHistory(type) {
 // =========================
 async function showChangeRolePage(member) {
     currentRoleChangeMember = member;
-    document.getElementById('change-role-member').innerText = `Участник: ${member}`;
+    const memberEl = document.getElementById('change-role-member');
+    if (memberEl) {
+        memberEl.innerText = `Участник: ${member}`;
+    }
 
     try {
         const response = await fetch('/api/available_roles');
         const data = await response.json();
 
-        document.getElementById('new-role-select').innerHTML = data.roles
-            .map(r => `<option value="${r}">${r}</option>`).join('');
+        const select = document.getElementById('new-role-select');
+        if (select && data.roles) {
+            select.innerHTML = data.roles.map(r => `<option value="${r}">${r}</option>`).join('');
+        }
 
         showPage('change-role-page');
     } catch (error) {
@@ -707,7 +605,10 @@ async function showChangeRolePage(member) {
 }
 
 async function confirmChangeRole() {
-    const newRole = document.getElementById('new-role-select').value;
+    const select = document.getElementById('new-role-select');
+    if (!select) return;
+
+    const newRole = select.value;
 
     try {
         const response = await fetch(`/api/change_role?user_id=${currentUser.id}`, {
@@ -728,5 +629,142 @@ async function confirmChangeRole() {
     }
 }
 
-// Запуск
+// =========================
+// 📬 ЗАЯВКИ
+// =========================
+async function loadApplications() {
+    showPage('applications-page');
+    try {
+        const response = await fetch(`/api/applications?user_id=${currentUser.id}`);
+        const data = await response.json();
+
+        if (!data.applications || data.applications.length === 0) {
+            document.getElementById('applications-data').innerHTML = '<p class="empty-message">📭 Нет заявок</p>';
+        } else {
+            document.getElementById('applications-data').innerHTML = data.applications
+                .map(a => `
+                    <div class="card">
+                        <p><strong>📬 #${a.id}</strong> | ${a.nick}</p>
+                        <p>🆔 ${a.steam_id}</p>
+                        <p>👤 ${a.tg_username}</p>
+                        <p>🕒 ${a.date}</p>
+                        <p><span class="status-badge">${a.status}</span></p>
+                    </div>
+                `).join('');
+        }
+    } catch (error) {
+        document.getElementById('applications-data').innerHTML = '<p class="error-message">❌ Ошибка</p>';
+    }
+}
+
+// =========================
+// 📝 ЛОГИ
+// =========================
+async function loadLogs() {
+    showPage('logs-page');
+    try {
+        const response = await fetch(`/api/logs?user_id=${currentUser.id}`);
+        const data = await response.json();
+
+        if (!data.logs || data.logs.length === 0) {
+            document.getElementById('logs-data').innerHTML = '<p class="empty-message">📭 Логи пусты</p>';
+        } else {
+            document.getElementById('logs-data').innerHTML = data.logs
+                .map(l => `
+                    <div class="card log-item">
+                        <p><strong>${l[4] || 'N/A'}</strong></p>
+                        <p>${l[0] || '?'} | ${l[1] || '?'} → ${l[3] || '?'}</p>
+                    </div>
+                `).join('');
+        }
+    } catch (error) {
+        document.getElementById('logs-data').innerHTML = '<p class="error-message">❌ Ошибка</p>';
+    }
+}
+
+// =========================
+// ⚖ ЖАЛОБЫ
+// =========================
+async function loadComplaints() {
+    showPage('complaints-page');
+    try {
+        const response = await fetch(`/api/complaints?user_id=${currentUser.id}`);
+        const data = await response.json();
+
+        if (!data.complaints || data.complaints.length === 0) {
+            document.getElementById('complaints-data').innerHTML = '<p class="empty-message">📭 Нет активных жалоб</p>';
+        } else {
+            document.getElementById('complaints-data').innerHTML = data.complaints
+                .map(c => `
+                    <div class="card complaint-card">
+                        <p><strong>⚖ Жалоба #${c.index}</strong></p>
+                        <p>👤 От: ${c.from_user}</p>
+                        <p>🎯 На: ${c.to_member}</p>
+                        <p>📝 ${c.reason}</p>
+                        <p>🕒 ${c.date}</p>
+                        <p><span class="status-badge">${c.status}</span></p>
+                        <div class="action-buttons">
+                            <button class="btn btn-warning" onclick="closeComplaint(${c.index}, 'pred')">⚠ Пред + закрыть</button>
+                            <button class="btn" onclick="closeComplaint(${c.index}, 'noaction')">❌ Закрыть</button>
+                        </div>
+                    </div>
+                `).join('');
+        }
+    } catch (error) {
+        document.getElementById('complaints-data').innerHTML = '<p class="error-message">❌ Ошибка</p>';
+    }
+}
+
+async function closeComplaint(index, action) {
+    const actionText = action === 'pred' ? 'Пред + закрыть' : 'Закрыть';
+
+    if (!confirm(`Вы уверены, что хотите ${actionText.toLowerCase()} эту жалобу?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/complaint/close?user_id=${currentUser.id}`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({index: index, action: action})
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            tg.showAlert(data.message);
+            loadComplaints();
+        } else {
+            tg.showAlert('Ошибка: ' + data.detail);
+        }
+    } catch (error) {
+        tg.showAlert('Ошибка: ' + error.message);
+    }
+}
+
+// =========================
+// 🎖 РАЗРЯДЫ
+// =========================
+async function loadRoles() {
+    showPage('roles-page');
+    try {
+        const response = await fetch('/api/roles');
+        const data = await response.json();
+
+        document.getElementById('roles-data').innerHTML = `
+            <h3>🪖 Сквадные (${data.сквадной?.length || 0})</h3>
+            <p>${data.сквадной?.join(', ') || 'Нет'}</p>
+            <h3>🎯 Пехи (${data.пех?.length || 0})</h3>
+            <p>${data.пех?.join(', ') || 'Нет'}</p>
+            <h3>🔧 Техи (${data.тех?.length || 0})</h3>
+            <p>${data.тех?.join(', ') || 'Нет'}</p>
+        `;
+    } catch (error) {
+        document.getElementById('roles-data').innerHTML = '<p class="error-message">❌ Ошибка</p>';
+    }
+}
+
+// =========================
+// 🚀 ЗАПУСК
+// =========================
 init();

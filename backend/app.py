@@ -13,6 +13,8 @@ from datetime import datetime, timedelta
 import logging
 import pytz
 from urllib.parse import unquote
+import asyncio
+
 load_dotenv()
 
 app = FastAPI(title="PET Clan Mini App")
@@ -40,8 +42,10 @@ sheet = client.open_by_key(os.getenv("SPREADSHEET_KEY"))
 ADMINS = list(map(int, os.getenv("ADMINS", "").split(",")))
 TECH_ADMINS = list(map(int, os.getenv("TECH_ADMINS", "").split(",")))
 
+
 def is_tech_admin(user_id):
     return user_id in TECH_ADMINS or user_id in ADMINS
+
 
 # Время MSK
 def get_msk_time():
@@ -56,41 +60,30 @@ def validate_telegram_data(init_data: str):
             logger.error("❌ TOKEN не задан!")
             return None
 
-        # Парсинг initData с декодированием
         data = {}
         for item in init_data.split('&'):
             if '=' in item:
                 key, value = item.split('=', 1)
                 data[key] = unquote(value)
 
-        # Проверка наличия hash
         if 'hash' not in data:
             logger.error("❌ Нет hash в initData")
             return None
 
         received_hash = data.pop('hash')
-
-        # Формируем строку для проверки (сортировка по ключам!)
         data_check_string = '\n'.join(f"{k}={v}" for k, v in sorted(data.items()))
-
-        # Вычисляем хеш
         secret_key = hmac.new(b"WebAppData", token.encode(), hashlib.sha256).digest()
         calculated_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
 
-        # Сравниваем хеши
         if calculated_hash != received_hash:
             logger.error(f"❌ Hash не совпадает!")
-            logger.error(f"   Expected: {calculated_hash}")
-            logger.error(f"   Received: {received_hash}")
             return None
 
-        # Проверка user данных
         if 'user' not in data:
             logger.error("❌ Нет user в initData")
             return None
 
-        # Парсим user (это JSON-строка!)
-        user_data = json.loads(data['user'])  # ← ВОТ ЗДЕСЬ БЫЛА ОШИБКА!
+        user_data = json.loads(data['user'])
         return user_data
 
     except json.JSONDecodeError as e:
@@ -99,102 +92,136 @@ def validate_telegram_data(init_data: str):
     except Exception as e:
         logger.error(f"❌ Ошибка валидации: {type(e).__name__}: {e}")
         return None
-# Вспомогательные функции
+
+
+# =========================
+# 🔧 ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+# =========================
 def find_member_by_tg_id(tg_id):
-    ws = sheet.worksheet("участники клана")
-    rows = ws.get_all_values()
-    for row in rows[1:]:
-        if len(row) >= 9 and row[8].strip() == str(tg_id):
-            return row[0]
+    try:
+        ws = sheet.worksheet("участники клана")
+        rows = ws.get_all_values()
+        for row in rows[1:]:
+            if len(row) >= 9 and row[8].strip() == str(tg_id):
+                return row[0]
+    except:
+        pass
     return None
 
 
 def get_member_info(nickname):
-    ws = sheet.worksheet("участники клана")
-    rows = ws.get_all_values()
-    for row in rows[1:]:
-        if len(row) >= 1 and row[0].strip() == nickname.strip():
-            return {
-                'nick': row[0] if len(row) > 0 else 'N/A',
-                'steam_id': row[1] if len(row) > 1 else 'N/A',
-                'role': row[2] if len(row) > 2 else 'N/A',
-                'warns': row[3] if len(row) > 3 else '0',
-                'praises': row[4] if len(row) > 4 else '0',
-                'score': row[5] if len(row) > 5 else '0',
-                'desirable': row[6] if len(row) > 6 else 'N/A',
-                'tg_username': row[7] if len(row) > 7 else '',
-                'tg_id': row[8] if len(row) > 8 else ''
-            }
+    try:
+        ws = sheet.worksheet("участники клана")
+        rows = ws.get_all_values()
+        for row in rows[1:]:
+            if len(row) >= 1 and row[0].strip() == nickname.strip():
+                return {
+                    'nick': row[0] if len(row) > 0 else 'N/A',
+                    'steam_id': row[1] if len(row) > 1 else 'N/A',
+                    'role': row[2] if len(row) > 2 else 'N/A',
+                    'warns': row[3] if len(row) > 3 else '0',
+                    'praises': row[4] if len(row) > 4 else '0',
+                    'score': row[5] if len(row) > 5 else '0',
+                    'desirable': row[6] if len(row) > 6 else 'N/A',
+                    'tg_username': row[7] if len(row) > 7 else '',
+                    'tg_id': row[8] if len(row) > 8 else ''
+                }
+    except:
+        pass
     return None
 
 
 def get_clan_members():
-    ws = sheet.worksheet("участники клана")
-    return [v for v in ws.col_values(1) if v.strip()]
+    try:
+        ws = sheet.worksheet("участники клана")
+        return [v for v in ws.col_values(1) if v.strip()]
+    except:
+        return []
 
 
 def append_praise(member, from_user, reason):
-    ws = sheet.worksheet("Похвала")
-    date = get_msk_time().strftime("%d.%m.%Y")
-    ws.append_row([member, from_user, reason, date])
+    try:
+        ws = sheet.worksheet("Похвала")
+        date = get_msk_time().strftime("%d.%m.%Y %H:%M")
+        ws.append_row([member, from_user, reason, date])
+    except Exception as e:
+        logger.error(f"append_praise error: {e}")
 
 
 def append_pred(member, reason):
-    ws = sheet.worksheet("преды")
-    date = get_msk_time().strftime("%d.%m.%Y")
-    ws.append_row([member, reason, date])
+    try:
+        ws = sheet.worksheet("преды")
+        date = get_msk_time().strftime("%d.%m.%Y %H:%M")
+        ws.append_row([member, reason, date])
+    except Exception as e:
+        logger.error(f"append_pred error: {e}")
 
 
 def add_complaint(from_user, from_user_id, to_member, reason):
-    ws = sheet.worksheet("жалобы")
-    date = get_msk_time().strftime("%d.%m.%Y %H:%M")
-    ws.append_row([from_user, str(from_user_id), to_member, reason, date, "активна", "", ""])
+    try:
+        ws = sheet.worksheet("жалобы")
+        date = get_msk_time().strftime("%d.%m.%Y %H:%M")
+        ws.append_row([from_user, str(from_user_id), to_member, reason, date, "активна", "", ""])
+    except Exception as e:
+        logger.error(f"add_complaint error: {e}")
 
 
 def get_complaints():
-    return sheet.worksheet("жалобы").get_all_values()
+    try:
+        return sheet.worksheet("жалобы").get_all_values()
+    except:
+        return []
 
 
 def update_complaint_field(index, column, value):
-    sheet.worksheet("жалобы").update_cell(index + 2, column, value)
+    try:
+        sheet.worksheet("жалобы").update_cell(index + 2, column, value)
+    except:
+        pass
 
 
 def close_complaint(index, closed_by=None):
-    update_complaint_field(index, 6, "закрыта")
-    if closed_by:
-        try:
+    try:
+        update_complaint_field(index, 6, "закрыта")
+        if closed_by:
             ws = sheet.worksheet("жалобы")
             timestamp = get_msk_time().strftime("%d.%m.%Y %H:%M")
             ws.update_cell(index + 2, 8, f"{closed_by} | {timestamp}")
-        except:
-            pass
+    except:
+        pass
 
 
 def append_log(action, username, user_id, to_member):
-    ws = sheet.worksheet("логи")
-    date = get_msk_time().strftime("%d.%m.%Y %H:%M")
-    ws.append_row([action, username, user_id, to_member, date])
+    try:
+        ws = sheet.worksheet("логи")
+        date = get_msk_time().strftime("%d.%m.%Y %H:%M")
+        ws.append_row([action, username, user_id, to_member, date])
+    except Exception as e:
+        logger.error(f"append_log error: {e}")
 
 
 def get_logs():
-    return sheet.worksheet("логи").get_all_values()
+    try:
+        return sheet.worksheet("логи").get_all_values()
+    except:
+        return []
 
 
 def get_members_by_role(role):
     try:
         ws = sheet.worksheet("разряды")
         rows = ws.get_all_values()[1:]
-        return [r[0] for r in rows if r[1].lower() == role]
+        return [r[0] for r in rows if len(r) > 1 and r[1].lower() == role.lower()]
     except:
         return []
 
 
 def get_top_praises(weeks=None):
-    ws = sheet.worksheet("Похвала")
-    rows = ws.get_all_values()[1:]
-    counter = {}
-    for row in rows:
-        try:
+    try:
+        ws = sheet.worksheet("Похвала")
+        rows = ws.get_all_values()[1:]
+        counter = {}
+        for row in rows:
             if len(row) < 4 or not row[0].strip():
                 continue
             member = row[0].strip()
@@ -202,13 +229,16 @@ def get_top_praises(weeks=None):
                 date_str = row[3].strip() if len(row) > 3 else None
                 if not date_str:
                     continue
-                date = datetime.strptime(date_str, "%d.%m.%Y")
-                if date < datetime.now() - timedelta(weeks=weeks):
+                try:
+                    date = datetime.strptime(date_str, "%d.%m.%Y")
+                    if date < datetime.now() - timedelta(weeks=weeks):
+                        continue
+                except:
                     continue
             counter[member] = counter.get(member, 0) + 1
-        except:
-            continue
-    return sorted(counter.items(), key=lambda x: x[1], reverse=True)[:10]
+        return sorted(counter.items(), key=lambda x: x[1], reverse=True)[:10]
+    except:
+        return []
 
 
 def get_applications(status=None):
@@ -222,7 +252,153 @@ def get_applications(status=None):
         return []
 
 
-# Главная страница
+def get_member_praises_history(nickname, limit=20):
+    try:
+        ws = sheet.worksheet("Похвала")
+        rows = ws.get_all_values()[1:]
+        praises = []
+        for row in rows:
+            if len(row) >= 4 and row[0].strip() == nickname.strip():
+                praises.append({"from": row[1], "reason": row[2], "date": row[3]})
+        return praises[-limit:]
+    except:
+        return []
+
+
+def get_member_preds_history(nickname, limit=20):
+    try:
+        ws = sheet.worksheet("преды")
+        rows = ws.get_all_values()[1:]
+        preds = []
+        for row in rows:
+            if len(row) >= 3 and row[0].strip() == nickname.strip():
+                preds.append({"reason": row[1], "date": row[2]})
+        return preds[-limit:]
+    except:
+        return []
+
+
+def get_available_roles():
+    try:
+        ws = sheet.worksheet("разряды")
+        rows = ws.get_all_values()[1:]
+        return list(set([r[1] for r in rows if len(r) > 1]))
+    except:
+        return ["сквадной", "пех", "тех", "новичок"]
+
+
+def change_member_role(member, new_role, changed_by):
+    try:
+        ws_roles = sheet.worksheet("разряды")
+        rows = ws_roles.get_all_values()
+        for idx, row in enumerate(rows):
+            if row and row[0] == member:
+                ws_roles.update_cell(idx + 1, 2, new_role)
+                break
+
+        ws_main = sheet.worksheet("участники клана")
+        rows_main = ws_main.get_all_values()
+        for idx, row in enumerate(rows_main):
+            if row and row[0] == member:
+                ws_main.update_cell(idx + 1, 3, new_role)
+                break
+
+        append_log("СМЕНА_РАЗРЯДА", changed_by, changed_by, f"{member} → {new_role}")
+        return True
+    except Exception as e:
+        logger.error(f"change_member_role error: {e}")
+        return False
+
+
+# =========================
+# 📢 ОПОВЕЩЕНИЯ
+# =========================
+def create_notification(author_id, author_name, audience, text, schedule_time, photo_url=None):
+    try:
+        ws = sheet.worksheet("запланированные_оповещения")
+        date_created = get_msk_time().strftime("%d.%m.%Y %H:%M")
+        status = "отправлено" if schedule_time == "now" else "ожидает"
+        ws.append_row([author_id, author_name, audience, text, schedule_time, date_created, status, photo_url or ""])
+        return True
+    except Exception as e:
+        logger.error(f"create_notification error: {e}")
+        try:
+            ws = sheet.add_worksheet("запланированные_оповещения", rows=100, cols=8)
+            ws.append_row(["author_id", "author_name", "audience", "text", "schedule_time", "date_created", "status",
+                           "photo_url"])
+            ws.append_row(
+                [author_id, author_name, audience, text, schedule_time, date_created, status, photo_url or ""])
+        except:
+            pass
+        return True
+
+
+def get_notifications(user_id):
+    try:
+        ws = sheet.worksheet("запланированные_оповещения")
+        rows = ws.get_all_values()[1:]
+
+        if user_id in ADMINS or user_id in TECH_ADMINS:
+            return [{"id": idx, "author": r[1], "audience": r[2], "text": r[3],
+                     "schedule": r[4], "created": r[5], "status": r[6]}
+                    for idx, r in enumerate(rows) if len(r) >= 7]
+        else:
+            return [{"id": idx, "author": r[1], "audience": r[2], "text": r[3],
+                     "schedule": r[4], "created": r[5], "status": r[6]}
+                    for idx, r in enumerate(rows) if len(r) >= 7 and r[6] == "отправлено"]
+    except:
+        return []
+
+
+# =========================
+# 📝 DEVLOGS
+# =========================
+def create_devlog(author_id, author_name, title, content, photo_url=None):
+    try:
+        ws = sheet.worksheet("devlogs")
+        date = get_msk_time().strftime("%d.%m.%Y %H:%M")
+        ws.append_row([author_id, author_name, title, content, date, "опубликовано", photo_url or ""])
+        return True
+    except Exception as e:
+        logger.error(f"create_devlog error: {e}")
+        try:
+            ws = sheet.add_worksheet("devlogs", rows=100, cols=7)
+            ws.append_row(["author_id", "author_name", "title", "content", "date", "status", "photo_url"])
+            ws.append_row([author_id, author_name, title, content, date, "опубликовано", photo_url or ""])
+        except:
+            pass
+        return True
+
+
+def get_devlogs():
+    try:
+        ws = sheet.worksheet("devlogs")
+        rows = ws.get_all_values()[1:]
+        return [{"id": idx, "author_id": r[0], "author": r[1], "title": r[2],
+                 "content": r[3], "date": r[4], "status": r[5]}
+                for idx, r in enumerate(rows) if len(r) >= 6]
+    except:
+        return []
+
+
+# =========================
+# 🏆 МАССОВАЯ ПОХВАЛА
+# =========================
+def bulk_praise(members, from_user, reason, event_name="Ивент"):
+    success = 0
+    for member in members:
+        try:
+            append_praise(member, from_user, f"🏆 {event_name}: {reason}")
+            success += 1
+        except:
+            pass
+    return success
+
+
+# =========================
+# 🌐 API ENDPOINTS
+# =========================
+
 @app.get("/", response_class=HTMLResponse)
 async def root():
     try:
@@ -233,40 +409,34 @@ async def root():
         return HTMLResponse("<h1>Error loading page</h1>", status_code=500)
 
 
-# Статика
 app.mount("/css", StaticFiles(directory="frontend/css"), name="css")
 app.mount("/js", StaticFiles(directory="frontend/js"), name="js")
 
 
-# API: Авторизация
 @app.post("/api/auth")
 async def auth(request: Request):
-    """Авторизация через Telegram Mini App"""
     try:
         data = await request.json()
         init_data = data.get("initData", "")
 
-        # 🔥 Проверка initData
         if not init_data:
-            logger.error("❌ initData пустой!")
             raise HTTPException(status_code=400, detail="initData is required")
 
-        # Валидация
         user_data = validate_telegram_data(init_data)
         if not user_data:
-            logger.error("❌ Валидация не прошла")
             raise HTTPException(status_code=401, detail="Invalid Telegram data")
 
-        # 🔥 user_data уже содержит ключ "user" (из фикса валидации)
-        user = user_data.get("user", user_data)  # Поддержка обоих форматов
+        user = user_data.get("user", user_data)
         user_id = user.get("id")
 
         is_admin = user_id in ADMINS
+        is_tech = is_tech_admin(user_id)
         existing_nick = find_member_by_tg_id(user_id)
 
         return {
             "user": user,
             "is_admin": is_admin,
+            "is_tech_admin": is_tech,
             "is_registered": existing_nick is not None,
             "nickname": existing_nick
         }
@@ -277,7 +447,6 @@ async def auth(request: Request):
         raise HTTPException(status_code=500, detail="Server error")
 
 
-# API: Профиль
 @app.get("/api/profile/{user_id}")
 async def get_profile(user_id: int):
     try:
@@ -297,7 +466,6 @@ async def get_profile(user_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# API: Список клана
 @app.get("/api/clan_members")
 async def get_clan_members_api():
     try:
@@ -308,7 +476,6 @@ async def get_clan_members_api():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# API: Похвала (все пользователи)
 @app.post("/api/praise")
 async def send_praise(request: Request, user_id: int):
     try:
@@ -333,7 +500,6 @@ async def send_praise(request: Request, user_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# API: Жалоба (все пользователи)
 @app.post("/api/complaint")
 async def send_complaint(request: Request, user_id: int):
     try:
@@ -358,7 +524,6 @@ async def send_complaint(request: Request, user_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# API: Предупреждение (только админы)
 @app.post("/api/pred")
 async def send_pred(request: Request, user_id: int):
     try:
@@ -386,7 +551,6 @@ async def send_pred(request: Request, user_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# API: Жалобы список (админы)
 @app.get("/api/complaints")
 async def get_complaints_api(user_id: int):
     try:
@@ -418,7 +582,6 @@ async def get_complaints_api(user_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# API: Закрыть жалобу (админы)
 @app.post("/api/complaint/close")
 async def close_complaint_api(request: Request, user_id: int):
     try:
@@ -427,7 +590,7 @@ async def close_complaint_api(request: Request, user_id: int):
 
         data = await request.json()
         index = data.get("index")
-        action = data.get("action")  # "pred" или "noaction"
+        action = data.get("action")
 
         if index is None or action not in ["pred", "noaction"]:
             raise HTTPException(status_code=400, detail="Invalid data")
@@ -442,7 +605,6 @@ async def close_complaint_api(request: Request, user_id: int):
         row = rows[index + 1]
         violator = row[2] if len(row) > 2 else "?"
         reason = row[3] if len(row) > 3 else "?"
-        sender_id = row[1] if len(row) > 1 else None
 
         if action == "pred":
             append_pred(violator, f"По жалобе: {reason}")
@@ -458,7 +620,6 @@ async def close_complaint_api(request: Request, user_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# API: Логи (админы)
 @app.get("/api/logs")
 async def get_logs_api(user_id: int):
     try:
@@ -474,7 +635,6 @@ async def get_logs_api(user_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# API: Заявки (админы)
 @app.get("/api/applications")
 async def get_applications_api(user_id: int):
     try:
@@ -499,7 +659,6 @@ async def get_applications_api(user_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# API: Статистика
 @app.get("/api/stats/{period}")
 async def get_stats(period: str):
     try:
@@ -511,7 +670,6 @@ async def get_stats(period: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# API: Разряды
 @app.get("/api/roles")
 async def get_roles_api():
     try:
@@ -527,214 +685,14 @@ async def get_roles_api():
 
 
 # =========================
-# 📢 ФУНКЦИИ ОПОВЕЩЕНИЙ
-# =========================
-def create_notification(author_id, author_name, audience, text, schedule_time, photo_url=None):
-    """Создать оповещение (немедленное или запланированное)"""
-    try:
-        ws = sheet.worksheet("запланированные_оповещения")
-        date_created = get_msk_time().strftime("%d.%m.%Y %H:%M")
-        status = "отправлено" if schedule_time == "now" else "ожидает"
-        ws.append_row([author_id, author_name, audience, text, schedule_time, date_created, status, photo_url or ""])
-        return True
-    except Exception as e:
-        logger.error(f"create_notification error: {e}")
-        ws = sheet.add_worksheet("запланированные_оповещения", rows=100, cols=8)
-        ws.append_row(
-            ["author_id", "author_name", "audience", "text", "schedule_time", "date_created", "status", "photo_url"])
-        ws.append_row([author_id, author_name, audience, text, schedule_time, date_created, status, photo_url or ""])
-        return True
-
-
-def get_notifications(user_id):
-    """Получить оповещения для пользователя (админы видят все)"""
-    try:
-        ws = sheet.worksheet("запланированные_оповещения")
-        rows = ws.get_all_values()[1:]
-
-        if user_id in ADMINS or user_id in TECH_ADMINS:
-            # Админы видят все
-            return [{"id": idx, "author": r[1], "audience": r[2], "text": r[3],
-                     "schedule": r[4], "created": r[5], "status": r[6]}
-                    for idx, r in enumerate(rows) if len(r) >= 7]
-        else:
-            # Обычные пользователи видят только отправленные
-            return [{"id": idx, "author": r[1], "audience": r[2], "text": r[3],
-                     "schedule": r[4], "created": r[5], "status": r[6]}
-                    for idx, r in enumerate(rows) if len(r) >= 7 and r[6] == "отправлено"]
-    except:
-        return []
-
-
-def update_notification_status(index, status):
-    """Обновить статус оповещения"""
-    try:
-        ws = sheet.worksheet("запланированные_оповещения")
-        ws.update_cell(index + 2, 7, status)
-        return True
-    except:
-        return False
-
-
-def get_recipients_by_audience(audience):
-    """Получить список TG ID по аудитории"""
-    try:
-        if audience == "все":
-            ws = sheet.worksheet("участники клана")
-            return [row[8] for row in ws.get_all_values()[1:] if len(row) >= 9 and row[8].strip()]
-        elif audience == "сквадной":
-            return get_members_tg_ids_by_role("сквадной")
-        elif audience == "пех":
-            return get_members_tg_ids_by_role("пех")
-        elif audience == "тех":
-            return get_members_tg_ids_by_role("тех")
-        elif audience == "админы":
-            return ADMINS
-        elif audience == "техадмины":
-            return TECH_ADMINS + ADMINS
-        return []
-    except:
-        return []
-
-
-def get_members_tg_ids_by_role(role):
-    """Получить TG ID участников по разряду"""
-    try:
-        ws_roles = sheet.worksheet("разряды")
-        ws_main = sheet.worksheet("участники клана")
-
-        role_members = [r[0] for r in ws_roles.get_all_values()[1:] if len(r) >= 2 and r[1].lower() == role.lower()]
-
-        tg_ids = []
-        for row in ws_main.get_all_values()[1:]:
-            if len(row) >= 9 and row[0] in role_members and row[8].strip():
-                tg_ids.append(row[8])
-        return tg_ids
-    except:
-        return []
-
-
-# =========================
-# 📝 ФУНКЦИИ DEVLOGS
-# =========================
-def create_devlog(author_id, author_name, title, content, photo_url=None):
-    """Создать devlog запись"""
-    try:
-        ws = sheet.worksheet("devlogs")
-        date = get_msk_time().strftime("%d.%m.%Y %H:%M")
-        ws.append_row([author_id, author_name, title, content, date, "опубликовано", photo_url or ""])
-        return True
-    except:
-        ws = sheet.add_worksheet("devlogs", rows=100, cols=7)
-        ws.append_row(["author_id", "author_name", "title", "content", "date", "status", "photo_url"])
-        ws.append_row([author_id, author_name, title, content, date, "опубликовано", photo_url or ""])
-        return True
-
-
-def get_devlogs():
-    """Получить все devlogs"""
-    try:
-        ws = sheet.worksheet("devlogs")
-        rows = ws.get_all_values()[1:]
-        return [{"id": idx, "author_id": r[0], "author": r[1], "title": r[2],
-                 "content": r[3], "date": r[4], "status": r[5]}
-                for idx, r in enumerate(rows) if len(r) >= 6]
-    except:
-        return []
-
-
-# =========================
-# 👥 ФУНКЦИИ ПРОСМОТРА ИСТОРИИ
-# =========================
-def get_member_praises(nickname, limit=20):
-    """Получить похвалы участника"""
-    try:
-        ws = sheet.worksheet("Похвала")
-        rows = ws.get_all_values()[1:]
-        praises = [{"from": r[1], "reason": r[2], "date": r[3]}
-                   for r in rows if len(r) >= 4 and r[0].strip() == nickname.strip()]
-        return praises[-limit:]
-    except:
-        return []
-
-
-def get_member_preds(nickname, limit=20):
-    """Получить предупреждения участника"""
-    try:
-        ws = sheet.worksheet("преды")
-        rows = ws.get_all_values()[1:]
-        preds = [{"reason": r[1], "date": r[2]}
-                 for r in rows if len(r) >= 3 and r[0].strip() == nickname.strip()]
-        return preds[-limit:]
-    except:
-        return []
-
-
-# =========================
-# 🏆 МАССОВАЯ ПОХВАЛА
-# =========================
-def bulk_praise(members, from_user, reason, event_name="Ивент"):
-    """Выдать похвалу нескольким участникам"""
-    success = 0
-    for member in members:
-        try:
-            append_praise(member, from_user, f"🏆 {event_name}: {reason}")
-            success += 1
-        except:
-            pass
-    return success
-
-
-# =========================
-# 🎖 СМЕНА РАЗРЯДА
-# =========================
-def change_member_role(member, new_role, changed_by):
-    """Изменить разряд участника"""
-    try:
-        # Обновить в листе разряды
-        ws_roles = sheet.worksheet("разряды")
-        rows = ws_roles.get_all_values()
-        for idx, row in enumerate(rows):
-            if row and row[0] == member:
-                ws_roles.update_cell(idx + 1, 2, new_role)
-                break
-
-        # Обновить в основном листе
-        ws_main = sheet.worksheet("участники клана")
-        rows_main = ws_main.get_all_values()
-        for idx, row in enumerate(rows_main):
-            if row and row[0] == member:
-                ws_main.update_cell(idx + 1, 3, new_role)
-                break
-
-        append_log("СМЕНА_РАЗРЯДА", changed_by, changed_by, f"{member} → {new_role}")
-        return True
-    except Exception as e:
-        logger.error(f"change_member_role error: {e}")
-        return False
-
-
-def get_available_roles():
-    """Получить все доступные разряды"""
-    try:
-        ws = sheet.worksheet("разряды")
-        rows = ws.get_all_values()[1:]
-        return list(set([r[1] for r in rows if len(r) > 1]))
-    except:
-        return ["сквадной", "пех", "тех", "новичок"]
-
-
-# =========================
 # 🆕 НОВЫЕ API ENDPOINTS
 # =========================
 
-# API: Проверка тех админа
 @app.get("/api/is_tech_admin/{user_id}")
 async def check_tech_admin(user_id: int):
     return {"is_tech_admin": is_tech_admin(user_id)}
 
 
-# API: Создать оповещение
 @app.post("/api/notification")
 async def create_notification_api(request: Request, user_id: int):
     if user_id not in ADMINS and user_id not in TECH_ADMINS:
@@ -758,13 +716,11 @@ async def create_notification_api(request: Request, user_id: int):
     return {"status": "ok", "message": "Оповещение создано ✅"}
 
 
-# API: Получить оповещения
 @app.get("/api/notifications")
 async def get_notifications_api(user_id: int):
     return {"notifications": get_notifications(user_id)}
 
 
-# API: Создать devlog
 @app.post("/api/devlog")
 async def create_devlog_api(request: Request, user_id: int):
     if not is_tech_admin(user_id):
@@ -786,29 +742,25 @@ async def create_devlog_api(request: Request, user_id: int):
     return {"status": "ok", "message": "Devlog опубликован ✅"}
 
 
-# API: Получить devlogs
 @app.get("/api/devlogs")
 async def get_devlogs_api():
     return {"devlogs": get_devlogs()}
 
 
-# API: Получить похвалы участника (админы)
 @app.get("/api/member_praises/{nickname}")
 async def get_member_praises_api(nickname: str, user_id: int):
     if user_id not in ADMINS:
         raise HTTPException(status_code=403, detail="Только для админов")
-    return {"praises": get_member_praises(nickname)}
+    return {"praises": get_member_praises_history(nickname)}
 
 
-# API: Получить предупреждения участника (админы)
 @app.get("/api/member_preds/{nickname}")
 async def get_member_preds_api(nickname: str, user_id: int):
     if user_id not in ADMINS:
         raise HTTPException(status_code=403, detail="Только для админов")
-    return {"preds": get_member_preds(nickname)}
+    return {"preds": get_member_preds_history(nickname)}
 
 
-# API: Массовая похвала (админы)
 @app.post("/api/bulk_praise")
 async def bulk_praise_api(request: Request, user_id: int):
     if user_id not in ADMINS:
@@ -831,7 +783,6 @@ async def bulk_praise_api(request: Request, user_id: int):
     return {"status": "ok", "message": f"Похвала выдана {success}/{len(members)} участникам ✅"}
 
 
-# API: Изменить разряд (админы)
 @app.post("/api/change_role")
 async def change_role_api(request: Request, user_id: int):
     if user_id not in ADMINS:
@@ -853,11 +804,13 @@ async def change_role_api(request: Request, user_id: int):
         raise HTTPException(status_code=500, detail="Ошибка смены разряда")
 
 
-# API: Получить доступные разряды
 @app.get("/api/available_roles")
 async def get_available_roles_api():
     return {"roles": get_available_roles()}
 
+
+# # Запуск
 # if __name__ == "__main__":
 #     import uvicorn
-
+#
+#     uvicorn.run(app, host="0.0.0.0", port=8000)
