@@ -2189,9 +2189,21 @@ async def on_startup(_):
         scheduler.add_job(scheduled_report_job, trigger=CronTrigger(hour=18, minute=30, day_of_week="sat", timezone=pytz.timezone("Europe/Moscow")), id="weekly_report", replace_existing=True)
         scheduler.start()
         logging.info("⏰ Планировщик запущен: отчёт каждую субботу в 18:30 МСК")
-    else:
-        logging.warning("⚠️ REPORT_CHAT_ID не задан — авто-отчёты отключены")
+        # Проверка девлогов каждые 30 секунд
+        scheduler.add_job(
+            check_new_devlogs,
+            trigger=CronTrigger(second="*/30", timezone=pytz.timezone("Europe/Moscow")),
+            id="check_devlogs",
+            replace_existing=True
+        )
 
+        # # Проверка оповещений каждую минуту
+        # scheduler.add_job(
+        #     check_scheduled_notifications,
+        #     trigger=CronTrigger(minute="*", timezone=pytz.timezone("Europe/Moscow")),
+        #     id="check_notifications",
+        #     replace_existing=True
+        # )
 async def on_shutdown(_):
     scheduler.shutdown()
 

@@ -395,13 +395,11 @@ async def send_devlog_to_telegram(title: str, content: str, author: str, photo_u
         logger.error(f"❌ Ошибка отправки девлога в Telegram: {e}")
 
 
-# ✅ Убери всё, что связано с asyncio и send_devlog_to_telegram
 def create_devlog(author_id, author_name, title, content, photo_url=None):
     try:
         ws = sheet.worksheet("devlogs")
         date = get_msk_time().strftime("%d.%m.%Y %H:%M")
-
-        # 🔥 Важно: последний столбец "sent" = "no" (флаг для бота)
+        # 🔥 Добавляем 8-й столбец "no" — флаг "не отправлено"
         ws.append_row([
             author_id,
             author_name,
@@ -410,11 +408,17 @@ def create_devlog(author_id, author_name, title, content, photo_url=None):
             date,
             "опубликовано",
             photo_url or "",
-            "no"  # ← Добавляем флаг: бот ещё не отправил
+            "no"  # ← Бот отправит и пометит "yes"
         ])
         return True
     except Exception as e:
         logger.error(f"create_devlog error: {e}")
+        try:
+            ws = sheet.add_worksheet("devlogs", rows=100, cols=8)  # 8 столбцов!
+            ws.append_row(["author_id", "author_name", "title", "content", "date", "status", "photo_url", "sent"])
+            ws.append_row([author_id, author_name, title, content, date, "опубликовано", photo_url or "", "no"])
+        except:
+            pass
         return True
 
 def get_devlogs():
