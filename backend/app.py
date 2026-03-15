@@ -395,21 +395,27 @@ async def send_devlog_to_telegram(title: str, content: str, author: str, photo_u
         logger.error(f"❌ Ошибка отправки девлога в Telegram: {e}")
 
 
+# ✅ Убери всё, что связано с asyncio и send_devlog_to_telegram
 def create_devlog(author_id, author_name, title, content, photo_url=None):
     try:
         ws = sheet.worksheet("devlogs")
         date = get_msk_time().strftime("%d.%m.%Y %H:%M")
-        ws.append_row([author_id, author_name, title, content, date, "опубликовано", photo_url or ""])
 
-        # 🔥 Запускаем отправку в Телеграм в фоне (не блокируем API)
-        asyncio.create_task(send_devlog_to_telegram(title, content, author_name, photo_url))
-
+        # 🔥 Важно: последний столбец "sent" = "no" (флаг для бота)
+        ws.append_row([
+            author_id,
+            author_name,
+            title,
+            content,
+            date,
+            "опубликовано",
+            photo_url or "",
+            "no"  # ← Добавляем флаг: бот ещё не отправил
+        ])
         return True
     except Exception as e:
         logger.error(f"create_devlog error: {e}")
-        # Логика создания листа если нет (оставь как было у тебя)
         return True
-
 
 def get_devlogs():
     try:

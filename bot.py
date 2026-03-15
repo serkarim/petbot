@@ -2259,6 +2259,69 @@ async def process_scheduled_notifications():
         logger.error(f"❌ Scheduler error: {e}")
 
 
+async def check_new_devlogs():
+    """Проверяет Google Sheets на новые девлоги и отправляет их"""
+    try:
+        ws = sheet.worksheet("devlogs")
+        rows = ws.get_all_values()[1:]  # без заголовка
+
+        devlog_topic = os.getenv("DEVLOGS_TOPIC_ID")
+        report_chat = os.getenv("REPORT_CHAT_ID")
+
+        if not report_chat:
+            return
+
+        chat_id = int(report_chat)
+        topic_id = int(devlog_topic) if devlog_topic and devlog_topic.isdigit() else None
+
+        for idx, row in enumerate(rows, start=2):  # start=2 т.к. строки с 1, + заголовок
+            if len(row) < 8:
+                continue
+
+            sent_flag = row[7].strip().lower()  # 8-й столбец (индекс 7)
+            if sent_flag == "yes":
+                continue  # Уже отправлено
+
+            # 📦 Данные девлога
+            author = row[1]
+            title = row[2]
+            content = row[3]
+            photo_url = row[6] if len(row) > 6 else None
+
+            # 📝 Формируем текст
+            import html
+            text = f"📝 <b>Devlog: {html.escape(title)}</b>\n\n"
+            text += f"👤 <i>{html.escape(author)}</i>\n\n"
+            text += html.escape(content)
+
+            # 📤 Отправка
+            try:
+                if photo_url and photo_url.strip():
+                    await bot.send_photo(
+                        chat_id=chat_id,
+                        photo=photo_url,
+                        caption=text,
+                        parse_mode="HTML",
+                        message_thread_id=topic_id
+                    )
+                else:
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text=text,
+                        parse_mode="HTML",
+                        message_thread_id=topic_id
+                    )
+
+                # ✅ Помечаем как отправленный
+                ws.update_cell(idx, 8, "yes")
+                logger.info(f"✅ Девлог #{idx - 1} отправлен")
+
+            except Exception as e:
+                logger.error(f"❌ Не отправлен девлог #{idx - 1}: {e}")
+
+    except Exception as e:
+        logger.error(f"❌ Ошибка check_new_devlogs: {e}")
+
 # 🔹 Запуск scheduler'а при старте бота
 async def on_startup(_):
     logger.info("✅ Бот запущен")
