@@ -14,7 +14,7 @@ import logging
 import pytz
 from urllib.parse import unquote
 import asyncio
-
+import html
 load_dotenv()
 
 app = FastAPI(title="PET Clan Mini App")
@@ -353,20 +353,61 @@ def get_notifications(user_id):
 # =========================
 # 📝 DEVLOGS
 # =========================
+# =========================
+# 📝 DEVLOGS
+# =========================
+async def send_devlog_to_telegram(title: str, content: str, author: str, photo_url: str = None):
+    """Отправляет девлог в группу в нужный топик"""
+    try:
+        # Импортируем бота внутри функции, чтобы избежать конфликтов циклов
+        from bot import bot
+
+        report_chat = os.getenv("REPORT_CHAT_ID")
+        devlog_topic = os.getenv("DEVLOGS_TOPIC_ID")
+
+        if not report_chat:
+            return
+
+        text = f"📝 <b>Devlog: {html.escape(title)}</b>\n\n"
+        text += f"👤 <i>{html.escape(author)}</i>\n\n"
+        text += html.escape(content)
+
+        chat_id = int(report_chat)
+        # Если топик не указан, отправляем просто в чат
+        topic_id = int(devlog_topic) if devlog_topic and devlog_topic.isdigit() else None
+
+        if photo_url:
+            await bot.send_photo(
+                chat_id=chat_id,
+                photo=photo_url,
+                caption=text,
+                parse_mode="HTML",
+                message_thread_id=topic_id
+            )
+        else:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode="HTML",
+                message_thread_id=topic_id
+            )
+    except Exception as e:
+        logger.error(f"❌ Ошибка отправки девлога в Telegram: {e}")
+
+
 def create_devlog(author_id, author_name, title, content, photo_url=None):
     try:
         ws = sheet.worksheet("devlogs")
         date = get_msk_time().strftime("%d.%m.%Y %H:%M")
         ws.append_row([author_id, author_name, title, content, date, "опубликовано", photo_url or ""])
+
+        # 🔥 Запускаем отправку в Телеграм в фоне (не блокируем API)
+        asyncio.create_task(send_devlog_to_telegram(title, content, author_name, photo_url))
+
         return True
     except Exception as e:
         logger.error(f"create_devlog error: {e}")
-        try:
-            ws = sheet.add_worksheet("devlogs", rows=100, cols=7)
-            ws.append_row(["author_id", "author_name", "title", "content", "date", "status", "photo_url"])
-            ws.append_row([author_id, author_name, title, content, date, "опубликовано", photo_url or ""])
-        except:
-            pass
+        # Логика создания листа если нет (оставь как было у тебя)
         return True
 
 
@@ -720,10 +761,9 @@ async def create_notification_api(request: Request, user_id: int):
 async def get_notifications_api(user_id: int):
     return {"notifications": get_notifications(user_id)}
 
-
 @app.post("/api/devlog")
 async def create_devlog_api(request: Request, user_id: int):
-    if not is_tech_admin(user_id):
+    if not is_tech_admin(user_id):  # ✅ Только тех-админы могут создавать
         raise HTTPException(status_code=403, detail="Только для тех админов")
 
     data = await request.json()

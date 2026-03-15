@@ -17,6 +17,11 @@ import pytz
 from aiogram.types import WebAppInfo  # ← Добавить в импорты
 import asyncio
 # =========================
+# 🔧 НАСТРОЙКА LOGGER
+# =========================
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+# =========================
 # 🔐 ENV
 # =========================
 TOKEN = os.getenv("TOKEN")
@@ -2096,12 +2101,14 @@ async def get_chat_id(message: types.Message):
 
 # Слова для отслеживания
 JDM_TRIGGERS = ["jdm", "ждм", "JDM", "ЖДМ", "Jdm", "Ждм"]
-
+YATO_TRIGGERS = ["ЯТО","ято","Ято","Yatoo","YATOO"]
 # Ответ бота (можно менять)
 JDM_RESPONSE = """
 <b>JDM лохи!!! слава петушкам!!!</b> 
 """
-
+YATO_RESPONSE = """
+<b>ЯТО ХУЕСОС, ПОЗОР ЕМУ!!!</b> 
+"""
 
 @dp.message_handler()
 async def auto_response_jdm(message: types.Message):
@@ -2127,6 +2134,11 @@ async def auto_response_jdm(message: types.Message):
             await asyncio.sleep(1)
             await message.answer(JDM_RESPONSE, parse_mode="HTML")
             logging.info(f"🏎️ JDM-ответ отправлен в чате {message.chat.id}")
+        if any(trigger.lower() in text_lower for trigger in YATO_TRIGGERS):
+            # Отвечаем с задержкой 1 секунда (чтобы выглядело естественнее)
+            await asyncio.sleep(1)
+            await message.answer(YATO_RESPONSE, parse_mode="HTML")
+            logging.info(f"🏎️ YATO-ответ отправлен в чате {message.chat.id}")
     except Exception as e:
         logging.error(f"❌ auto_response_jdm: {e}")
 
@@ -2183,6 +2195,80 @@ async def on_startup(_):
 async def on_shutdown(_):
     scheduler.shutdown()
 
+
+# =========================
+# 🔄 SCHEDULER: Оповещения
+# =========================
+async def process_scheduled_notifications():
+    """Проверка и отправка запланированных оповещений"""
+    try:
+        ws = sheet.worksheet("запланированные_оповещения")
+        rows = ws.get_all_values()[1:]
+        now = get_msk_time()
+
+        for idx, row in enumerate(rows, start=2):
+            if len(row) < 7:
+                continue
+            status, schedule_time = row[6], row[4]
+            if status != "ожидает" or schedule_time == "now":
+                continue
+            try:
+                scheduled = datetime.strptime(schedule_time, "%d.%m.%Y %H:%M")
+                scheduled = pytz.timezone("Europe/Moscow").localize(scheduled)
+            except:
+                continue
+            if scheduled <= now:
+                audience, text, photo_url = row[2], row[3], row[7] if len(row) > 7 else None
+                recipients = []
+
+                # 🔹 Получатели
+                if audience == "all":
+                    members_ws = sheet.worksheet("участники клана")
+                    for r in members_ws.get_all_values()[1:]:
+                        if len(r) > 8 and r[8].strip().isdigit():
+                            recipients.append(int(r[8]))
+                elif audience == "admins":
+                    recipients = ADMINS
+                elif audience == "role:":
+                    role = audience.split(":")[1] if ":" in audience else ""
+                    if role:
+                        roles_ws = sheet.worksheet("разряды")
+                        for r in roles_ws.get_all_values()[1:]:
+                            if len(r) > 1 and r[1].lower() == role.lower():
+                                nick = r[0]
+                                main_ws = sheet.worksheet("участники клана")
+                                for mr in main_ws.get_all_values()[1:]:
+                                    if mr[0] == nick and len(mr) > 8 and mr[8].strip().isdigit():
+                                        recipients.append(int(mr[8]))
+
+                # 🔹 Отправка
+                for uid in recipients:
+                    try:
+                        if photo_url:
+                            await bot.send_photo(uid, photo=photo_url, caption=f"📢 {text}", parse_mode="HTML")
+                        else:
+                            await bot.send_message(uid, text=f"📢 {text}", parse_mode="HTML")
+                        await asyncio.sleep(0.05)
+                    except Exception as e:
+                        logger.error(f"❌ Не отправлено {uid}: {e}")
+
+                # ✅ Обновляем статус
+                ws.update_cell(idx, 7, "отправлено")
+                logger.info(f"✅ Оповещение #{idx - 1} отправлено")
+    except Exception as e:
+        logger.error(f"❌ Scheduler error: {e}")
+
+
+# 🔹 Запуск scheduler'а при старте бота
+async def on_startup(_):
+    logger.info("✅ Бот запущен")
+    scheduler.add_job(process_scheduled_notifications,CronTrigger(minute="*/2", timezone=pytz.timezone("Europe/Moscow")))
+    scheduler.start()
+
+
+async def on_shutdown(_):
+    logger.info("🛑 Бот остановлен")
+    scheduler.shutdown()
 # =========================
 # 🚀 START
 # =========================
