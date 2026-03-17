@@ -1216,9 +1216,13 @@ async def view_praises(callback: types.CallbackQuery):
 # 🎬 ОТПРАВКА КЛИПОВ (с Google Drive)
 # =========================
 
+# =========================
+# 📹 ОТПРАВКА КЛИПА — ВЫБОР СПОСОБА
+# =========================
+
 @dp.callback_query_handler(lambda c: c.data == "submit_clip")
 async def start_clip_submission(callback: types.CallbackQuery, state: FSMContext):
-    """Начало отправки клипа"""
+    """Выбор способа отправки клипа"""
     try:
         user_id = callback.from_user.id
         existing_nick = find_member_by_tg_id(user_id)
@@ -1232,20 +1236,25 @@ async def start_clip_submission(callback: types.CallbackQuery, state: FSMContext
             clip_user_id=user_id,
             clip_username=callback.from_user.username or callback.from_user.full_name
         )
-        await ActionState.clip_waiting_video.set()
 
         keyboard = InlineKeyboardMarkup(row_width=1).add(
+            InlineKeyboardButton("📤 Загрузить файл (до 20 МБ)", callback_data="clip_method_file"),
+            InlineKeyboardButton("🔗 Отправить ссылку (любой размер)", callback_data="clip_method_link"),
             InlineKeyboardButton("❌ Отмена", callback_data="clip_cancel")
         )
 
         await callback.message.edit_text(
             "🎬 **Отправка клипа**\n\n"
-            "📹 Отправьте видео (клип, смешной момент, хайлайт):\n"
-            "• Макс. размер: **20 МБ** (лимит загрузки ботом)\n"
-            "• Формат: MP4, MOV\n"
-            "• Длительность: до 1 минуты рекомендуется\n"
-            "• Видео будет загружено на Google Drive 🔗\n\n"
-            "🔙 Нажмите «Отмена» в любой момент",
+            "Выберите способ отправки:\n\n"
+            "📤 **Загрузить файл**\n"
+            "• Макс. размер: 20 МБ\n"
+            "• Бот загрузит на Google Drive\n"
+            "• Быстро и удобно\n\n"
+            "🔗 **Отправить ссылку**\n"
+            "• Без лимита размера\n"
+            "• Загрузите в своё облако (Google Drive, Яндекс.Диск и т.д.)\n"
+            "• Отправьте ссылку боту\n\n"
+            "⚠️ Если видео больше 20 МБ — выбирайте ссылку!",
             reply_markup=keyboard,
             parse_mode="HTML"
         )
@@ -1253,8 +1262,6 @@ async def start_clip_submission(callback: types.CallbackQuery, state: FSMContext
     except Exception as e:
         logging.error(f"❌ start_clip_submission: {e}")
         await callback.answer("❌ Ошибка", show_alert=True)
-
-
 @dp.callback_query_handler(lambda c: c.data == "clip_cancel", state="*")
 async def cancel_clip_submission(callback: types.CallbackQuery, state: FSMContext):
     """Отмена отправки клипа"""
@@ -1271,6 +1278,36 @@ async def cancel_clip_submission(callback: types.CallbackQuery, state: FSMContex
         logging.error(f"❌ cancel_clip_submission: {e}")
 
 
+# =========================
+# 📤 МЕТОД: ЗАГРУЗКА ФАЙЛА
+# =========================
+
+@dp.callback_query_handler(lambda c: c.data == "clip_method_file")
+async def clip_method_file(callback: types.CallbackQuery, state: FSMContext):
+    """Пользователь выбрал загрузку файла"""
+    try:
+        await ActionState.clip_waiting_video.set()
+
+        keyboard = InlineKeyboardMarkup(row_width=1).add(
+            InlineKeyboardButton("❌ Отмена", callback_data="clip_cancel")
+        )
+
+        await callback.message.edit_text(
+            "📤 **Загрузка файла**\n\n"
+            "📹 Отправьте видеофайл:\n"
+            "• Макс. размер: **20 МБ**\n"
+            "• Формат: MP4, MOV\n"
+            "• Длительность: до 1 минуты рекомендуется\n\n"
+            "🔙 Нажмите «Отмена» в любой момент",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"❌ clip_method_file: {e}")
+        await callback.answer("❌ Ошибка", show_alert=True)
+
+
 @dp.message_handler(content_types=["video", "video_note"], state=ActionState.clip_waiting_video)
 async def receive_clip_video(message: types.Message, state: FSMContext):
     """Получение видео и загрузка на Google Drive"""
@@ -1278,22 +1315,28 @@ async def receive_clip_video(message: types.Message, state: FSMContext):
         video = message.video or message.video_note
         file_size_mb = video.file_size / (1024 * 1024)
 
-        # Проверка размера
+        logging.info(f"🎬 Видео получено: {file_size_mb:.2f} МБ от @{message.from_user.username}")
+
         if file_size_mb > 20:
-            await message.answer("❌ Видео слишком большое! Макс. 20 МБ.\nОтправьте более короткий клип.")
+            await message.answer(
+                "❌ **Видео слишком большое!**\n\n"
+                "Максимальный размер: 20 МБ\n\n"
+                "💡 Попробуйте:\n"
+                "• Сжать видео\n"
+                "• Или выберите «🔗 Отправить ссылку» в меню",
+                parse_mode="HTML"
+            )
             return
 
-        # Показываем статус загрузки
-        status_msg = await message.answer("⏳ Загружаю видео на диск... Пожалуйста, подождите.")
+        status_msg = await message.answer("⏳ Загружаю на диск... Пожалуйста, подождите.")
 
-        # Скачиваем файл с серверов Telegram
         file = await bot.get_file(video.file_id)
         file_bytes = await bot.download_file(file.file_path)
 
-        # Формируем имя файла
+        logging.info(f"📥 Файл скачан: {len(file_bytes)} байт")
+
         filename = f"clip_{message.from_user.id}_{int(time.time())}.mp4"
 
-        # Загружаем на Google Drive
         from gdrive import upload_video_to_drive
         drive_data = upload_video_to_drive(
             file_bytes=file_bytes,
@@ -1301,12 +1344,15 @@ async def receive_clip_video(message: types.Message, state: FSMContext):
             description=f"Клип от {message.from_user.full_name}"
         )
 
+        logging.info(f"✅ Загружено на диск: {drive_data['web_view_link']}")
+
         await state.update_data(
-            clip_file_id=video.file_id,  # Telegram ID (для резерва)
-            clip_drive_id=drive_data['file_id'],  # Google Drive ID
-            clip_drive_link=drive_data['web_view_link'],  # Публичная ссылка
+            clip_file_id=video.file_id,
+            clip_drive_id=drive_data['file_id'],
+            clip_drive_link=drive_data['web_view_link'],
             clip_duration=getattr(video, 'duration', 0),
-            clip_file_size=video.file_size
+            clip_file_size=video.file_size,
+            clip_type="file"  # 🔥 Метка типа
         )
         await ActionState.clip_waiting_desc.set()
 
@@ -1317,26 +1363,89 @@ async def receive_clip_video(message: types.Message, state: FSMContext):
         await status_msg.edit_text(
             "✅ Видео загружено на диск! 🎬\n\n"
             "📝 Теперь добавьте описание (опционально):\n"
-            "• Что за момент?\n"
-            "• Карта/режим?\n"
-            "• Почему это смешно/круто?\n\n"
+            "• Что за момент?\n• Карта/режим?\n• Почему это смешно/круто?\n\n"
             "Или просто отправьте «.» чтобы пропустить",
             reply_markup=keyboard
         )
     except Exception as e:
-        logging.error(f"❌ receive_clip_video: {e}")
-        await message.answer("❌ Ошибка загрузки видео. Попробуйте позже.")
+        logging.error(f"❌ receive_clip_video: {type(e).__name__}: {e}")
+        await message.answer(
+            f"❌ Ошибка загрузки видео.\n\n"
+            f"🔍 Детали: `{str(e)[:100]}`\n\n"
+            f"Попробуйте:\n"
+            f"• Сжать видео до 10-15 МБ\n"
+            f"• Или выберите «🔗 Отправить ссылку» в меню",
+            parse_mode="HTML"
+        )
         await state.finish()
 
 
+# =========================
+# 🔗 МЕТОД: ОТПРАВКА ССЫЛКИ
+# =========================
+
+@dp.callback_query_handler(lambda c: c.data == "clip_method_link")
+async def clip_method_link(callback: types.CallbackQuery, state: FSMContext):
+    """Пользователь выбрал отправку ссылки"""
+    try:
+        await ActionState.clip_link_waiting_url.set()
+
+        keyboard = InlineKeyboardMarkup(row_width=1).add(
+            InlineKeyboardButton("❌ Отмена", callback_data="clip_cancel")
+        )
+
+        await callback.message.edit_text(
+            "🔗 **Отправка ссылки**\n\n"
+            "📤 Загрузите видео в облако и отправьте ссылку:\n\n"
+            "✅ **Поддерживаемые сервисы:**\n"
+            "• Google Drive\n"
+            "• Яндекс.Диск\n"
+            "• Dropbox\n"
+            "• Mega.nz\n"
+            "• OneDrive\n\n"
+            "⚠️ **Важно:**\n"
+            "• Ссылка должна быть публичной\n"
+            "• Не требовать логин/пароль\n"
+            "• Проверьте в режиме инкогнито\n\n"
+            "🔙 Нажмите «Отмена» в любой момент",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"❌ clip_method_link: {e}")
+        await callback.answer("❌ Ошибка", show_alert=True)
+
+
+# =========================
+# 📝 ОПИСАНИЕ КЛИПА (универсальное)
+# =========================
+
 @dp.message_handler(state=ActionState.clip_waiting_desc)
 async def receive_clip_description(message: types.Message, state: FSMContext):
-    """Получение описания и отправка на модерацию"""
+    """Получение описания для файла"""
+    await finalize_clip_submission(message, state)
+
+
+@dp.message_handler(state=ActionState.clip_link_waiting_desc)
+async def receive_clip_link_description(message: types.Message, state: FSMContext):
+    """Получение описания для ссылки"""
+    await finalize_clip_submission(message, state)
+
+
+async def finalize_clip_submission(message: types.Message, state: FSMContext):
+    """Финализация отправки клипа (общая для файла и ссылки)"""
     try:
         data = await state.get_data()
         description = message.text if message.text and message.text.strip() != "." else "Без описания"
 
-        # Сохраняем в Google Sheets (обновлённая структура)
+        # Определяем ссылку в зависимости от типа
+        if data.get('clip_type') == 'link':
+            clip_url = data['clip_link_url']
+        else:
+            clip_url = data['clip_drive_link']
+
+        # Сохраняем в Google Sheets
         ws = get_clips_sheet()
         date = get_msk_time().strftime("%d.%m.%Y %H:%M")
 
@@ -1347,37 +1456,37 @@ async def receive_clip_description(message: types.Message, state: FSMContext):
             data['clip_user_nick'],  # 1: Ник в клане
             data['clip_username'],  # 2: TG username
             data['clip_user_id'],  # 3: TG ID
-            data['clip_drive_link'],  # 4: 🔗 Ссылка на Google Drive (вместо file_id!)
-            data['clip_drive_id'],  # 5: Drive File ID
+            clip_url,  # 4: 🔗 Ссылка (Drive или внешняя)
+            data.get('clip_type', 'file'),  # 5: Тип (file/link)
             description[:500],  # 6: Описание
             date,  # 7: Дата отправки
             "на проверке"  # 8: Статус
         ])
 
-        # Формируем сообщение для админов
+        # Сообщение для админов
         preview_text = (
             f"🎬 **Новый клип на модерацию!**\n"
             f"🆔 #{clip_id}\n"
             f"👤 {data['clip_user_nick']} (@{data['clip_username']})\n"
             f"📝 {description}\n"
-            f"⏱ {data['clip_duration']} сек | 💾 {data['clip_file_size'] / (1024 * 1024):.1f} МБ\n"
-            f"🔗 [Открыть видео]({data['clip_drive_link']})"
+            f"📎 Тип: {'📤 Файл' if data.get('clip_type') == 'file' else '🔗 Ссылка'}\n"
+            f"🔗 [Открыть видео]({clip_url})"
         )
 
-        # Кнопки модерации
         keyboard = InlineKeyboardMarkup(row_width=2).add(
             InlineKeyboardButton("✅ Одобрить", callback_data=f"clip_approve_{clip_id}"),
             InlineKeyboardButton("❌ Отклонить", callback_data=f"clip_reject_{clip_id}")
         )
 
-        # Отправляем всем админам
+        # Отправляем админам
         for admin_id in ADMINS:
             try:
                 await bot.send_message(
                     chat_id=admin_id,
                     text=preview_text,
                     reply_markup=keyboard,
-                    parse_mode="Markdown"
+                    parse_mode="Markdown",
+                    disable_web_page_preview=False
                 )
             except Exception as e:
                 logging.error(f"❌ Ошибка уведомления админа {admin_id}: {e}")
@@ -1388,18 +1497,15 @@ async def receive_clip_description(message: types.Message, state: FSMContext):
         await message.answer(
             f"✅ Клип отправлен на модерацию! 🎬\n"
             f"🆔 Ваш номер: `#{clip_id}`\n\n"
-            f"🔗 Ссылка на видео: {data['clip_drive_link']}\n\n"
+            f"🔗 Ссылка: `{clip_url}`\n\n"
             f"После одобрения вы получите уведомление.",
             reply_markup=main_menu(user_id, is_registered=True),
-            parse_mode="HTML",
-            disable_web_page_preview=True
+            parse_mode="HTML"
         )
     except Exception as e:
-        logging.error(f"❌ receive_clip_description: {e}")
+        logging.error(f"❌ finalize_clip_submission: {e}")
         await message.answer("❌ Ошибка отправки клипа")
         await state.finish()
-
-
 # =========================
 # 🎬 АДМИН: МОДЕРАЦИЯ КЛИПОВ (ссылка на диск уже есть)
 # =========================
