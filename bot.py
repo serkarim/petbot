@@ -13,7 +13,9 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from gdrive import upload_video_to_drive
 import pytz
+import time
 from aiogram.types import WebAppInfo  # ← Добавить в импорты
 import asyncio
 # =========================
@@ -118,7 +120,19 @@ def get_member_info(nickname):
                 'tg_id': row[8] if len(row) > 8 else ''
             }
     return None
-
+def get_clips_sheet():
+    """Получает или создаёт лист 'клипы' в Google Sheets"""
+    try:
+        return sheet.worksheet("клипы")
+    except:
+        # Если листа нет — создаём
+        ws = sheet.add_worksheet("клипы", rows=100, cols=10)
+        ws.append_row([
+            "ID", "Ник клана", "TG Username", "TG ID",
+            "Drive Link", "Drive File ID", "Описание",
+            "Дата", "Статус", "Дата одобрения", "Одобрил"
+        ])
+        return ws
 def find_member_by_tg_id(tg_id):
     ws = sheet.worksheet("участники клана")
     rows = ws.get_all_values()
@@ -1192,6 +1206,304 @@ async def view_praises(callback: types.CallbackQuery):
         await callback.answer()
     except Exception as e:
         logging.error(f"❌ view_praises: {e}")
+        await callback.answer("❌ Ошибка", show_alert=True)
+
+
+# =========================
+# 🎬 ОТПРАВКА КЛИПОВ (с Google Drive)
+# =========================
+
+@dp.callback_query_handler(lambda c: c.data == "submit_clip")
+async def start_clip_submission(callback: types.CallbackQuery, state: FSMContext):
+    """Начало отправки клипа"""
+    try:
+        user_id = callback.from_user.id
+        existing_nick = find_member_by_tg_id(user_id)
+
+        if not existing_nick:
+            await callback.answer("❌ Только для зарегистрированных участников", show_alert=True)
+            return
+
+        await state.update_data(
+            clip_user_nick=existing_nick,
+            clip_user_id=user_id,
+            clip_username=callback.from_user.username or callback.from_user.full_name
+        )
+        await ActionState.clip_waiting_video.set()
+
+        keyboard = InlineKeyboardMarkup(row_width=1).add(
+            InlineKeyboardButton("❌ Отмена", callback_data="clip_cancel")
+        )
+
+        await callback.message.edit_text(
+            "🎬 **Отправка клипа**\n\n"
+            "📹 Отправьте видео (клип, смешной момент, хайлайт):\n"
+            "• Макс. размер: **20 МБ** (лимит загрузки ботом)\n"
+            "• Формат: MP4, MOV\n"
+            "• Длительность: до 1 минуты рекомендуется\n"
+            "• Видео будет загружено на Google Drive 🔗\n\n"
+            "🔙 Нажмите «Отмена» в любой момент",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"❌ start_clip_submission: {e}")
+        await callback.answer("❌ Ошибка", show_alert=True)
+
+
+@dp.callback_query_handler(lambda c: c.data == "clip_cancel", state="*")
+async def cancel_clip_submission(callback: types.CallbackQuery, state: FSMContext):
+    """Отмена отправки клипа"""
+    try:
+        await state.finish()
+        user_id = callback.from_user.id
+        existing_nick = find_member_by_tg_id(user_id)
+        await callback.message.edit_text(
+            "✅ Отмена. Клип не отправлен.",
+            reply_markup=main_menu(user_id, is_registered=(existing_nick is not None))
+        )
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"❌ cancel_clip_submission: {e}")
+
+
+@dp.message_handler(content_types=["video", "video_note"], state=ActionState.clip_waiting_video)
+async def receive_clip_video(message: types.Message, state: FSMContext):
+    """Получение видео и загрузка на Google Drive"""
+    try:
+        video = message.video or message.video_note
+        file_size_mb = video.file_size / (1024 * 1024)
+
+        # Проверка размера
+        if file_size_mb > 20:
+            await message.answer("❌ Видео слишком большое! Макс. 20 МБ.\nОтправьте более короткий клип.")
+            return
+
+        # Показываем статус загрузки
+        status_msg = await message.answer("⏳ Загружаю видео на диск... Пожалуйста, подождите.")
+
+        # Скачиваем файл с серверов Telegram
+        file = await bot.get_file(video.file_id)
+        file_bytes = await bot.download_file(file.file_path)
+
+        # Формируем имя файла
+        filename = f"clip_{message.from_user.id}_{int(time.time())}.mp4"
+
+        # Загружаем на Google Drive
+        from gdrive import upload_video_to_drive
+        drive_data = upload_video_to_drive(
+            file_bytes=file_bytes,
+            filename=filename,
+            description=f"Клип от {message.from_user.full_name}"
+        )
+
+        await state.update_data(
+            clip_file_id=video.file_id,  # Telegram ID (для резерва)
+            clip_drive_id=drive_data['file_id'],  # Google Drive ID
+            clip_drive_link=drive_data['web_view_link'],  # Публичная ссылка
+            clip_duration=getattr(video, 'duration', 0),
+            clip_file_size=video.file_size
+        )
+        await ActionState.clip_waiting_desc.set()
+
+        keyboard = InlineKeyboardMarkup(row_width=1).add(
+            InlineKeyboardButton("❌ Отмена", callback_data="clip_cancel")
+        )
+
+        await status_msg.edit_text(
+            "✅ Видео загружено на диск! 🎬\n\n"
+            "📝 Теперь добавьте описание (опционально):\n"
+            "• Что за момент?\n"
+            "• Карта/режим?\n"
+            "• Почему это смешно/круто?\n\n"
+            "Или просто отправьте «.» чтобы пропустить",
+            reply_markup=keyboard
+        )
+    except Exception as e:
+        logging.error(f"❌ receive_clip_video: {e}")
+        await message.answer("❌ Ошибка загрузки видео. Попробуйте позже.")
+        await state.finish()
+
+
+@dp.message_handler(state=ActionState.clip_waiting_desc)
+async def receive_clip_description(message: types.Message, state: FSMContext):
+    """Получение описания и отправка на модерацию"""
+    try:
+        data = await state.get_data()
+        description = message.text if message.text and message.text.strip() != "." else "Без описания"
+
+        # Сохраняем в Google Sheets (обновлённая структура)
+        ws = get_clips_sheet()
+        date = get_msk_time().strftime("%d.%m.%Y %H:%M")
+
+        clip_id = str(max([int(r[0]) for r in ws.get_all_values()[1:] if r[0].isdigit()], default=0) + 1)
+
+        ws.append_row([
+            clip_id,  # 0: ID
+            data['clip_user_nick'],  # 1: Ник в клане
+            data['clip_username'],  # 2: TG username
+            data['clip_user_id'],  # 3: TG ID
+            data['clip_drive_link'],  # 4: 🔗 Ссылка на Google Drive (вместо file_id!)
+            data['clip_drive_id'],  # 5: Drive File ID
+            description[:500],  # 6: Описание
+            date,  # 7: Дата отправки
+            "на проверке"  # 8: Статус
+        ])
+
+        # Формируем сообщение для админов
+        preview_text = (
+            f"🎬 **Новый клип на модерацию!**\n"
+            f"🆔 #{clip_id}\n"
+            f"👤 {data['clip_user_nick']} (@{data['clip_username']})\n"
+            f"📝 {description}\n"
+            f"⏱ {data['clip_duration']} сек | 💾 {data['clip_file_size'] / (1024 * 1024):.1f} МБ\n"
+            f"🔗 [Открыть видео]({data['clip_drive_link']})"
+        )
+
+        # Кнопки модерации
+        keyboard = InlineKeyboardMarkup(row_width=2).add(
+            InlineKeyboardButton("✅ Одобрить", callback_data=f"clip_approve_{clip_id}"),
+            InlineKeyboardButton("❌ Отклонить", callback_data=f"clip_reject_{clip_id}")
+        )
+
+        # Отправляем всем админам
+        for admin_id in ADMINS:
+            try:
+                await bot.send_message(
+                    chat_id=admin_id,
+                    text=preview_text,
+                    reply_markup=keyboard,
+                    parse_mode="Markdown"
+                )
+            except Exception as e:
+                logging.error(f"❌ Ошибка уведомления админа {admin_id}: {e}")
+
+        await state.finish()
+        user_id = message.from_user.id
+
+        await message.answer(
+            f"✅ Клип отправлен на модерацию! 🎬\n"
+            f"🆔 Ваш номер: `#{clip_id}`\n\n"
+            f"🔗 Ссылка на видео: {data['clip_drive_link']}\n\n"
+            f"После одобрения вы получите уведомление.",
+            reply_markup=main_menu(user_id, is_registered=True),
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+    except Exception as e:
+        logging.error(f"❌ receive_clip_description: {e}")
+        await message.answer("❌ Ошибка отправки клипа")
+        await state.finish()
+
+
+# =========================
+# 🎬 АДМИН: МОДЕРАЦИЯ КЛИПОВ (ссылка на диск уже есть)
+# =========================
+
+@dp.callback_query_handler(lambda c: c.data.startswith("clip_approve_"))
+async def approve_clip(callback: types.CallbackQuery):
+    """Одобрение клипа — просто меняем статус"""
+    try:
+        if callback.from_user.id not in ADMINS:
+            await callback.answer("❌ Только для админов", show_alert=True)
+            return
+
+        clip_id = callback.data.replace("clip_approve_", "")
+        ws = get_clips_sheet()
+        rows = ws.get_all_values()
+
+        # Ищем клип
+        row_idx = None
+        user_tg_id = None
+        drive_link = None
+
+        for idx, row in enumerate(rows[1:], start=2):
+            if row[0] == clip_id:
+                row_idx = idx
+                user_tg_id = row[3]
+                drive_link = row[4]
+                break
+
+        if not row_idx:
+            await callback.answer("❌ Клип не найден", show_alert=True)
+            return
+
+        # Обновляем статус
+        ws.update_cell(row_idx, 9, "одобрен")  # Статус
+        ws.update_cell(row_idx, 10, get_msk_time().strftime("%d.%m.%Y %H:%M"))  # Дата одобрения
+        ws.update_cell(row_idx, 11, callback.from_user.username or "admin")  # Кто одобрил
+
+        # Уведомляем пользователя
+        try:
+            await bot.send_message(
+                int(user_tg_id),
+                f"✅ Ваш клип #{clip_id} одобрен! 🎉\n\n"
+                f"🔗 Ссылка: {drive_link}\n\n"
+                f"Спасибо за контент! 🎮"
+            )
+        except:
+            pass  # Пользователь мог заблокировать бота
+
+        await callback.message.edit_text(f"✅ Клип #{clip_id} одобрен!\n🔗 {drive_link}")
+        await callback.answer()
+
+    except Exception as e:
+        logging.error(f"❌ approve_clip: {e}")
+        await callback.answer("❌ Ошибка", show_alert=True)
+
+
+@dp.callback_query_handler(lambda c: c.data.startswith("clip_reject_"))
+async def reject_clip(callback: types.CallbackQuery):
+    """Отклонение клипа + удаление с диска (опционально)"""
+    try:
+        if callback.from_user.id not in ADMINS:
+            await callback.answer("❌ Только для админов", show_alert=True)
+            return
+
+        clip_id = callback.data.replace("clip_reject_", "")
+        ws = get_clips_sheet()
+        rows = ws.get_all_values()
+
+        row_idx = None
+        user_tg_id = None
+        drive_file_id = None
+
+        for idx, row in enumerate(rows[1:], start=2):
+            if row[0] == clip_id:
+                row_idx = idx
+                user_tg_id = row[3]
+                drive_file_id = row[5]  # Drive File ID для удаления
+                break
+
+        if not row_idx:
+            await callback.answer("❌ Клип не найден", show_alert=True)
+            return
+
+        # Опционально: удалить файл с диска при отклонении
+        # if drive_file_id:
+        #     from gdrive import get_drive_service
+        #     service = get_drive_service()
+        #     service.files().delete(fileId=drive_file_id).execute()
+
+        # Обновляем статус
+        ws.update_cell(row_idx, 9, "отклонён")
+
+        # Уведомляем пользователя
+        try:
+            await bot.send_message(
+                int(user_tg_id),
+                f"❌ Ваш клип #{clip_id} не прошёл модерацию.\n"
+                f"Попробуйте отправить другой момент! 🎮"
+            )
+        except:
+            pass
+
+        await callback.message.edit_text(f"❌ Клип #{clip_id} отклонён")
+        await callback.answer()
+
+    except Exception as e:
+        logging.error(f"❌ reject_clip: {e}")
         await callback.answer("❌ Ошибка", show_alert=True)
 # =========================
 # 📋 КЛАН
