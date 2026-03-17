@@ -417,6 +417,8 @@ class ActionState(StatesGroup):
     reg_confirm = State()
     reg_select_existing = State()
     reg_existing_confirm = State()
+    clip_waiting_video = State()
+    clip_waiting_desc = State()
 
 # =========================
 # START / CANCEL / BACK
