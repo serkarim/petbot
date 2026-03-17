@@ -420,6 +420,10 @@ class ActionState(StatesGroup):
     reg_existing_confirm = State()
     clip_waiting_video = State()
     clip_waiting_desc = State()
+    clip_waiting_video = State()        # Ожидание видео файла
+    clip_waiting_desc = State()         # Ожидание описания для файла
+    clip_link_waiting_url = State()     # 🔥 Ожидание ссылки
+    clip_link_waiting_desc = State()    # 🔥 Ожидание описания для ссылки
 
 # =========================
 # START / CANCEL / BACK
