@@ -381,6 +381,7 @@ def main_menu(user_id, is_registered=False, has_pending_app=False):
         keyboard.add(InlineKeyboardButton("📊 Статистика", callback_data="stats"))
         keyboard.add(InlineKeyboardButton("⚖ Жалобы", callback_data="complaints"))
         keyboard.add(InlineKeyboardButton("👤 Мой профиль", callback_data="my_profile"))
+        keyboard.add(InlineKeyboardButton("🎬 Отправить клип", callback_data="submit_clip"))
         # 🆕 КНОПКА MINI APP
         keyboard.add(InlineKeyboardButton(
             "📱 Mini App",
