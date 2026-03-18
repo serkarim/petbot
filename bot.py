@@ -753,77 +753,48 @@ async def receive_clip_link_description(message: types.Message, state: FSMContex
 
 
 async def finalize_clip_submission(message: types.Message, state: FSMContext):
-    """Финализация отправки клипа (общая для файла и ссылки)"""
+    """Финализация отправки клипа"""
     try:
-        data = await state.get_data()
-        description = message.text if message.text and message.text.strip() != "." else "Без описания"
+        async with state.proxy() as
+            description = message.text if message.text != "Пропустить" else ""
+            user_id = message.from_user.id
 
-        # Определяем ссылку в зависимости от типа
-        if data.get('clip_type') == 'link':
-            clip_url = data['clip_link_url']
-        else:
-            clip_url = data['clip_drive_link']
+            # 🔹 Проверяем, какой тип клипа был отправлен
+            clip_video_file_id = data.get('clip_video_file_id')  # Для видео-файла
+            clip_drive_link = data.get('clip_drive_link')  # Для ссылки
 
-        # Сохраняем в Google Sheets
-        ws = get_clips_sheet()
-        date = get_msk_time().strftime("%d.%m.%Y %H:%M")
-
-        clip_id = str(max([int(r[0]) for r in ws.get_all_values()[1:] if r[0].isdigit()], default=0) + 1)
-
-        ws.append_row([
-            clip_id,  # 0: ID
-            data['clip_user_nick'],  # 1: Ник в клане
-            data['clip_username'],  # 2: TG username
-            data['clip_user_id'],  # 3: TG ID
-            clip_url,  # 4: 🔗 Ссылка (Drive или внешняя)
-            data.get('clip_type', 'file'),  # 5: Тип (file/link)
-            description[:500],  # 6: Описание
-            date,  # 7: Дата отправки
-            "на проверке"  # 8: Статус
-        ])
-
-        # Сообщение для админов
-        preview_text = (
-            f"🎬 **Новый клип на модерацию!**\n"
-            f"🆔 #{clip_id}\n"
-            f"👤 {data['clip_user_nick']} (@{data['clip_username']})\n"
-            f"📝 {description}\n"
-            f"📎 Тип: {'📤 Файл' if data.get('clip_type') == 'file' else '🔗 Ссылка'}\n"
-            f"🔗 [Открыть видео]({clip_url})"
-        )
-
-        keyboard = InlineKeyboardMarkup(row_width=2).add(
-            InlineKeyboardButton("✅ Одобрить", callback_data=f"clip_approve_{clip_id}"),
-            InlineKeyboardButton("❌ Отклонить", callback_data=f"clip_reject_{clip_id}")
-        )
-
-        # Отправляем админам
-        for admin_id in ADMINS:
-            try:
-                await bot.send_message(
-                    chat_id=admin_id,
-                    text=preview_text,
-                    reply_markup=keyboard,
-                    parse_mode="Markdown",
-                    disable_web_page_preview=False
+            if clip_video_file_id:
+                # 📁 Отправка видео-файлом
+                logging.info(f"📁 Сохранение видео-файла: {clip_video_file_id}")
+                await save_clip_to_db(
+                    user_id=user_id,
+                    clip_type="video_file",
+                    clip_file_id=clip_video_file_id,
+                    description=description
                 )
-            except Exception as e:
-                logging.error(f"❌ Ошибка уведомления админа {admin_id}: {e}")
+            elif clip_drive_link:
+                # 🔗 Отправка ссылкой
+                logging.info(f"🔗 Сохранение ссылки: {clip_drive_link}")
+                await save_clip_to_db(
+                    user_id=user_id,
+                    clip_type="link",
+                    clip_url=clip_drive_link,
+                    description=description
+                )
+            else:
+                # ❌ Нет данных о клипе
+                logging.error(f"❌ Нет данных о клипе у пользователя {user_id}")
+                await message.answer("❌ Ошибка: нет данных о клипе. Начните заново.")
+                await state.finish()
+                return
+
+            await message.answer("✅ Клип успешно отправлен на модерацию!")
 
         await state.finish()
-        user_id = message.from_user.id
 
-        await message.answer(
-            f"✅ Клип отправлен на модерацию! 🎬\n"
-            f"🆔 Ваш номер: `#{clip_id}`\n\n"
-            f"🔗 Ссылка: `{clip_url}`\n\n"
-            f"После одобрения вы получите уведомление.",
-            reply_markup=main_menu(user_id, is_registered=True),
-            parse_mode="HTML"
-        )
     except Exception as e:
-        logging.error(f"❌ finalize_clip_submission: {e}")
-        await message.answer("❌ Ошибка отправки клипа")
+        logging.error(f"❌ finalize_clip_submission: {type(e).__name__}: {e}")
+        await message.answer("❌ Ошибка отправки. Попробуйте ещё раз")
         await state.finish()
 # =========================
 # 🎬 АДМИН: МОДЕРАЦИЯ КЛИПОВ (ссылка на диск уже есть)
