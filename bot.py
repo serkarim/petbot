@@ -755,7 +755,8 @@ async def receive_clip_link_description(message: types.Message, state: FSMContex
 async def finalize_clip_submission(message: types.Message, state: FSMContext):
     """Финализация отправки клипа"""
     try:
-        async with state.proxy() as
+        # ✅ Исправлено: добавлено 'data:' в конце строки
+        async with state.proxy() as data:
             description = message.text if message.text != "Пропустить" else ""
             user_id = message.from_user.id
 
@@ -766,7 +767,7 @@ async def finalize_clip_submission(message: types.Message, state: FSMContext):
             if clip_video_file_id:
                 # 📁 Отправка видео-файлом
                 logging.info(f"📁 Сохранение видео-файла: {clip_video_file_id}")
-                await save_clip_to_db(
+                await upload_video_to_drive(
                     user_id=user_id,
                     clip_type="video_file",
                     clip_file_id=clip_video_file_id,
@@ -775,7 +776,7 @@ async def finalize_clip_submission(message: types.Message, state: FSMContext):
             elif clip_drive_link:
                 # 🔗 Отправка ссылкой
                 logging.info(f"🔗 Сохранение ссылки: {clip_drive_link}")
-                await save_clip_to_db(
+                await upload_video_to_drive(
                     user_id=user_id,
                     clip_type="link",
                     clip_url=clip_drive_link,
@@ -2503,6 +2504,7 @@ async def get_chat_id(message: types.Message):
 # Слова для отслеживания
 JDM_TRIGGERS = ["jdm", "ждм", "JDM", "ЖДМ", "Jdm", "Ждм"]
 YATO_TRIGGERS = ["ЯТО","ято","Ято","Yatoo","YATOO"]
+PRO_TRIGGERS = ["ПРОТОКОЛ","протокол","PROTOCOL","protocol","Протокол"]
 # Ответ бота (можно менять)
 JDM_RESPONSE = """
 <b>JDM лохи!!! слава петушкам!!!</b> 
@@ -2510,7 +2512,7 @@ JDM_RESPONSE = """
 YATO_RESPONSE = """
 <b>ЯТО ХУЕСОС, ПОЗОР ЕМУ!!!</b> 
 """
-
+PRO_RESPONSE = """ <b> Нахуй этот пивной гнилой сервак . Идите на мжд!!! </b> """
 @dp.message_handler()
 async def auto_response_jdm(message: types.Message):
     """Отвечает на слова jdm/ждм в чате"""
@@ -2540,6 +2542,11 @@ async def auto_response_jdm(message: types.Message):
             await asyncio.sleep(1)
             await message.answer(YATO_RESPONSE, parse_mode="HTML")
             logging.info(f"🏎️ YATO-ответ отправлен в чате {message.chat.id}")
+        if any(trigger.lower() in text_lower for trigger in PRO_TRIGGERS):
+            # Отвечаем с задержкой 1 секунда (чтобы выглядело естественнее)
+            await asyncio.sleep(1)
+            await message.answer(PRO_RESPONSE, parse_mode="HTML")
+            logging.info(f"🏎️ PRO-ответ отправлен в чате {message.chat.id}")
     except Exception as e:
         logging.error(f"❌ auto_response_jdm: {e}")
 
