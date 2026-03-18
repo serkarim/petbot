@@ -623,75 +623,45 @@ async def clip_method_file(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer("❌ Ошибка", show_alert=True)
 
 
-@dp.message_handler(content_types=["video", "video_note"], state=ActionState.clip_waiting_video)
+@dp.message_handler(state=ActionState.clip_waiting_video, content_types=types.ContentTypes.VIDEO)
 async def receive_clip_video(message: types.Message, state: FSMContext):
-    """Получение видео и загрузка на Google Drive"""
+    """Получение видео файла"""
     try:
-        video = message.video or message.video_note
-        file_size_mb = video.file_size / (1024 * 1024)
+        video = message.video
+        video_file_id = video.file_id
+        file_size = video.file_size  # ← БЕРЁМ размер из объекта Telegram (НЕ len()!)
 
-        logging.info(f"🎬 Видео получено: {file_size_mb:.2f} МБ от @{message.from_user.username}")
-
-        if file_size_mb > 20:
-            await message.answer(
-                "❌ **Видео слишком большое!**\n\n"
-                "Максимальный размер: 20 МБ\n\n"
-                "💡 Попробуйте:\n"
-                "• Сжать видео\n"
-                "• Или выберите «🔗 Отправить ссылку» в меню",
-                parse_mode="HTML"
-            )
+        # 🔹 Валидация размера (опционально)
+        MAX_SIZE = 20 * 1024 * 1024  # 20 МБ
+        if file_size and file_size > MAX_SIZE:
+            await message.answer(f"❌ Файл слишком большой ({file_size / 1024 / 1024:.2f} МБ). Максимум 20 МБ")
             return
 
-        status_msg = await message.answer("⏳ Загружаю на диск... Пожалуйста, подождите.")
+        # 🔹 Сохраняем file_id в FSM data
+        async with state.proxy() as data:
+            data['clip_video_file_id'] = video_file_id
+            data['clip_file_size'] = file_size
 
-        file = await bot.get_file(video.file_id)
-        file_bytes = await bot.download_file(file.file_path)
-
-        logging.info(f"📥 Файл скачан: {len(file_bytes)} байт")
-
-        filename = f"clip_{message.from_user.id}_{int(time.time())}.mp4"
-
-        from gdrive import upload_video_to_drive
-        drive_data = upload_video_to_drive(
-            file_bytes=file_bytes,
-            filename=filename,
-            description=f"Клип от {message.from_user.full_name}"
-        )
-
-        logging.info(f"✅ Загружено на диск: {drive_data['web_view_link']}")
-
-        await state.update_data(
-            clip_file_id=video.file_id,
-            clip_drive_id=drive_data['file_id'],
-            clip_drive_link=drive_data['web_view_link'],
-            clip_duration=getattr(video, 'duration', 0),
-            clip_file_size=video.file_size,
-            clip_type="file"  # 🔥 Метка типа
-        )
+        # 🔹 Переводим в состояние ожидания описания
         await ActionState.clip_waiting_desc.set()
 
         keyboard = InlineKeyboardMarkup(row_width=1).add(
             InlineKeyboardButton("❌ Отмена", callback_data="clip_cancel")
         )
 
-        await status_msg.edit_text(
-            "✅ Видео загружено на диск! 🎬\n\n"
-            "📝 Теперь добавьте описание (опционально):\n"
-            "• Что за момент?\n• Карта/режим?\n• Почему это смешно/круто?\n\n"
-            "Или просто отправьте «.» чтобы пропустить",
-            reply_markup=keyboard
-        )
-    except Exception as e:
-        logging.error(f"❌ receive_clip_video: {type(e).__name__}: {e}")
         await message.answer(
-            f"❌ Ошибка загрузки видео.\n\n"
-            f"🔍 Детали: `{str(e)[:100]}`\n\n"
-            f"Попробуйте:\n"
-            f"• Сжать видео до 10-15 МБ\n"
-            f"• Или выберите «🔗 Отправить ссылку» в меню",
+            "📝 **Добавьте описание к клипу**\n\n"
+            "Напишите краткое описание или нажмите «Пропустить»:\n\n"
+            "🔙 Нажмите «Отмена» в любой момент",
+            reply_markup=keyboard,
             parse_mode="HTML"
         )
+
+        logging.info(f"🎬 Видео получено: {file_size / 1024 / 1024:.2f} МБ от @{message.from_user.username}")
+
+    except Exception as e:
+        logging.error(f"❌ receive_clip_video: {type(e).__name__}: {e}")
+        await message.answer("❌ Ошибка обработки видео. Попробуйте ещё раз или /cancel")
         await state.finish()
 
 
