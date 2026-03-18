@@ -732,6 +732,40 @@ async def clip_method_link(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer("❌ Ошибка", show_alert=True)
 
 
+@dp.message_handler(state=ActionState.clip_link_waiting_url, content_types=types.ContentTypes.TEXT)
+async def receive_clip_link_url(message: types.Message, state: FSMContext):
+    """Получение ссылки на клип"""
+    try:
+        clip_url = message.text.strip()
+
+        # 🔹 Валидация URL
+        if not clip_url.startswith(('http://', 'https://')):
+            await message.answer("❌ Это не похоже на ссылку. Отправьте URL, начинающийся с http:// или https://")
+            return
+
+        # 🔹 Сохраняем ссылку в FSM data
+        async with state.proxy() as data:
+            data['clip_url'] = clip_url
+
+        # 🔹 Переводим в состояние ожидания описания
+        await ActionState.clip_link_waiting_desc.set()
+
+        keyboard = InlineKeyboardMarkup(row_width=1).add(
+            InlineKeyboardButton("❌ Отмена", callback_data="clip_cancel")
+        )
+
+        await message.answer(
+            "📝 **Добавьте описание к клипу**\n\n"
+            "Напишите краткое описание или нажмите «Пропустить»:\n\n"
+            "🔙 Нажмите «Отмена» в любой момент",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+
+    except Exception as e:
+        logging.error(f"❌ receive_clip_link_url: {e}")
+        await message.answer("❌ Ошибка. Попробуйте ещё раз или /cancel")
+        await state.finish()
 # =========================
 # 📝 ОПИСАНИЕ КЛИПА (универсальное)
 # =========================
