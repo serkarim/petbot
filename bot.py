@@ -1755,10 +1755,18 @@ async def process_reason(message: types.Message, state: FSMContext):
             return
 
         elif action == "praise":
+            existing_nick = find_member_by_tg_id(user_id)
+            apps = get_applications(status="ожидает")
+            has_pending = any(app[4] == str(user_id) for app in apps)
+
+            sender_nick = find_member_by_tg_id(user_id) or username
+            if member and sender_nick and member.lower() == sender_nick.lower():
+                await message.answer("❌ Нельзя отправить похвалу самому себе!",reply_markup=main_menu(user_id, is_registered=(existing_nick is not None),has_pending_app=has_pending))
+                await state.finish()
+                return
             append_praise(member, username, message.text)
             append_log("ПОХВАЛА", username, user_id, member)
 
-            existing_nick = find_member_by_tg_id(user_id)
             apps = get_applications(status="ожидает")
             has_pending = any(app[4] == str(user_id) for app in apps)
 

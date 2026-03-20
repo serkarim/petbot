@@ -540,6 +540,10 @@ async def send_praise(request: Request, user_id: int):
         existing_nick = find_member_by_tg_id(user_id)
         from_user = existing_nick if existing_nick else f"TG:{user_id}"
 
+        # 🚫 ПРОВЕРКА: нельзя похвалить самого себя
+        if member.strip().lower() == from_user.strip().lower():
+            raise HTTPException(status_code=400, detail="❌ Нельзя отправить похвалу самому себе!")
+
         append_praise(member, from_user, reason)
         append_log("ПОХВАЛА_MINIAPP", from_user, user_id, member)
 
