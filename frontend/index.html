@@ -58,6 +58,15 @@
                 <h3>⚠ Предупреждение</h3>
                 <textarea id="pred-reason" placeholder="Причина предупреждения"></textarea>
                 <button onclick="sendPred()" class="admin-btn">Выдать пред</button>
+                <!-- Кнопки для админа -->
+                <div class="member-admin-actions" style="display:none; gap:8px; margin-top:10px;" data-admin-buttons>
+                    <button class="action-btn btn-praise" onclick="openMemberRecordsModal('[[NICK]]', 'praises')" style="padding:10px; font-size:13px;">
+                        👏 Смотреть похвалы
+                    </button>
+                    <button class="action-btn btn-pred" onclick="openMemberRecordsModal('[[NICK]]', 'preds')" style="padding:10px; font-size:13px;">
+                        ⚠️ Смотреть преды
+                    </button>
+                </div>  
             </div>
 
             <button onclick="navigate('clan_list')">🔙 Назад</button>
@@ -82,7 +91,6 @@
                 <button onclick="loadLogs()">📝 Логи</button>
                 <button onclick="loadComplaints()">⚖ Жалобы</button>
                 <button onclick="loadRoles()">🎖 Разряды</button>
-                <button id="btn-admin-records" onclick="navigate('admin_records')" class="btn-danger">👨‍💼 Админ-панель</button>
             </nav>
             <div id="admin-data"></div>
             <button onclick="navigate('home')">🔙 Назад</button>
@@ -227,32 +235,31 @@
     </div>
     <div id="member-history-data" class="card"></div>
 </div>
-<!-- 👨‍💼 ADMIN PANEL: ПРОСМОТР И УДАЛЕНИЕ ЗАПИСЕЙ -->
-<div id="admin-records-page" class="page">
-    <h1>👨‍💼 Админ-панель</h1>
+<!-- 🔍 MODAL: ПРОСМОТР ПОХВАЛ/ПРЕДОВ УЧАСТНИКА -->
+<div id="member-records-modal" class="modal-overlay">
+    <div class="modal-content">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+            <h3 id="modal-title">📋 Записи участника</h3>
+            <button onclick="closeMemberRecordsModal()" style="width:auto;padding:8px 16px;font-size:20px;line-height:1;">✕</button>
+        </div>
 
-    <!-- Табы -->
-    <div class="admin-tabs">
-        <div class="admin-tab active" data-type="all">Все</div>
-        <div class="admin-tab" data-type="praise">👏 Похвалы</div>
-        <div class="admin-tab" data-type="pred">⚠️ Преды</div>
-        <div class="admin-tab" data-type="complaint">❌ Жалобы</div>
+        <!-- Табы -->
+        <div class="admin-tabs" style="margin:0 0 15px 0;">
+            <div class="admin-tab active" data-tab="praises" onclick="switchMemberRecordTab('praises')">👏 Похвалы</div>
+            <div class="admin-tab" data-tab="preds" onclick="switchMemberRecordTab('preds')">⚠️ Преды</div>
+        </div>
+
+        <!-- Список -->
+        <div id="member-records-list" class="admin-records-list">
+            <div class="loading-spinner"></div>
+        </div>
+
+        <!-- Пусто -->
+        <div id="member-records-empty" class="empty-state" style="display:none;">
+            <div class="icon">📭</div>
+            <p>Записей не найдено</p>
+        </div>
     </div>
-
-    <!-- Поиск -->
-    <div class="search-box">
-        <input type="text" id="records-search" placeholder="🔍 Поиск по нику или причине...">
-    </div>
-
-    <!-- Список записей -->
-    <div id="admin-records-list" class="admin-records-list">
-        <div class="loading-spinner"></div>
-    </div>
-
-    <!-- Кнопка обновления -->
-    <button onclick="loadAdminRecords(currentRecordType)" style="margin-top:20px;">
-        🔄 Обновить список
-    </button>
 </div>
 <!-- ==================== -->
 <!-- 🎖 Смена разряда -->
