@@ -858,6 +858,157 @@ async def change_role_api(request: Request, user_id: int):
         raise HTTPException(status_code=500, detail="Ошибка смены разряда")
 
 
+# ============ АДМИН: ПОЛУЧЕНИЕ ЗАПИСЕЙ ============
+@app.get("/api/admin/records")
+async def get_admin_records(record_type: str = "all", user_id: int = 0):
+    """Получить похвалы/преды/жалобы для админ-панели"""
+    if user_id not in ADMINS:
+        raise HTTPException(status_code=403, detail="Только для админов")
+
+    try:
+        result = {"praises": [], "preds": [], "complaints": []}
+
+        # 📋 ПОХВАЛЫ
+        if record_type in ["all", "praise"]:
+            try:
+                ws_praise = sheet.worksheet("Похвала")
+                rows = ws_praise.get_all_values()
+                for idx, row in enumerate(rows[1:], start=0):  # пропускаем заголовок
+                    if len(row) >= 4:
+                        result["praises"].append({
+                            "row_index": idx,
+                            "to": row[0],
+                            "from": row[1],
+                            "reason": row[2],
+                            "date": row[3] if len(row) > 3 else ""
+                        })
+            except Exception as e:
+                logger.warning(f"Could not load praises: {e}")
+
+        # ⚠️ ПРЕДЫ
+        if record_type in ["all", "pred"]:
+            try:
+                ws_pred = sheet.worksheet("преды")
+                rows = ws_pred.get_all_values()
+                for idx, row in enumerate(rows[1:], start=0):
+                    if len(row) >= 4:
+                        result["preds"].append({
+                            "row_index": idx,
+                            "to": row[0],
+                            "from": row[1],
+                            "reason": row[2],
+                            "date": row[3] if len(row) > 3 else ""
+                        })
+            except Exception as e:
+                logger.warning(f"Could not load preds: {e}")
+
+        # ❌ ЖАЛОБЫ
+        if record_type in ["all", "complaint"]:
+            try:
+                ws_complaint = sheet.worksheet("Жалобы")
+                rows = ws_complaint.get_all_values()
+                for idx, row in enumerate(rows[1:], start=0):
+                    if len(row) >= 4:
+                        result["complaints"].append({
+                            "row_index": idx,
+                            "to": row[0],
+                            "from": row[1],
+                            "reason": row[2],
+                            "date": row[3] if len(row) > 3 else ""
+                        })
+            except Exception as e:
+                logger.warning(f"Could not load complaints: {e}")
+
+        return result
+    except Exception as e:
+        logger.error(f"Get admin records error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============ АДМИН: УДАЛЕНИЕ ПОХВАЛЫ ============
+@app.delete("/api/admin/praise/{row_index}")
+async def delete_praise(row_index: int, user_id: int = 0):
+    """Удалить запись похвалы по индексу строки"""
+    if user_id not in ADMINS:
+        raise HTTPException(status_code=403, detail="Только для админов")
+
+    try:
+        ws = sheet.worksheet("Похвала")
+        rows = ws.get_all_values()
+        # row_index + 2: +1 для заголовка, +1 потому что гугл-таблица 1-based
+        if row_index + 2 > len(rows) or row_index < 0:
+            raise HTTPException(status_code=404, detail="Запись не найдена")
+
+        deleted_row = rows[row_index + 1]  # сохраняем для лога
+        ws.delete_rows(row_index + 2)
+
+        admin_nick = find_member_by_tg_id(user_id) or f"TG:{user_id}"
+        append_log("УДАЛЕНИЕ_ПОХВАЛЫ", admin_nick, user_id, f"Удалено: {deleted_row}")
+
+        return {"status": "ok", "message": "Похвала удалена ✅"}
+    except gspread.exceptions.APIError as e:
+        logger.error(f"Google Sheets API error: {e}")
+        raise HTTPException(status_code=500, detail="Ошибка Google Sheets")
+    except Exception as e:
+        logger.error(f"Delete praise error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============ АДМИН: УДАЛЕНИЕ ПРЕДА ============
+@app.delete("/api/admin/pred/{row_index}")
+async def delete_pred(row_index: int, user_id: int = 0):
+    """Удалить запись предупреждения по индексу строки"""
+    if user_id not in ADMINS:
+        raise HTTPException(status_code=403, detail="Только для админов")
+
+    try:
+        ws = sheet.worksheet("преды")
+        rows = ws.get_all_values()
+        if row_index + 2 > len(rows) or row_index < 0:
+            raise HTTPException(status_code=404, detail="Запись не найдена")
+
+        deleted_row = rows[row_index + 1]
+        ws.delete_rows(row_index + 2)
+
+        admin_nick = find_member_by_tg_id(user_id) or f"TG:{user_id}"
+        append_log("УДАЛЕНИЕ_ПРЕДА", admin_nick, user_id, f"Удалено: {deleted_row}")
+
+        return {"status": "ok", "message": "Предупреждение удалено ✅"}
+    except gspread.exceptions.APIError as e:
+        logger.error(f"Google Sheets API error: {e}")
+        raise HTTPException(status_code=500, detail="Ошибка Google Sheets")
+    except Exception as e:
+        logger.error(f"Delete pred error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============ АДМИН: УДАЛЕНИЕ ЖАЛОБЫ ============
+@app.delete("/api/admin/complaint/{row_index}")
+async def delete_complaint(row_index: int, user_id: int = 0):
+    """Удалить запись жалобы по индексу строки"""
+    if user_id not in ADMINS:
+        raise HTTPException(status_code=403, detail="Только для админов")
+
+    try:
+        ws = sheet.worksheet("Жалобы")
+        rows = ws.get_all_values()
+        if row_index + 2 > len(rows) or row_index < 0:
+            raise HTTPException(status_code=404, detail="Запись не найдена")
+
+        deleted_row = rows[row_index + 1]
+        ws.delete_rows(row_index + 2)
+
+        admin_nick = find_member_by_tg_id(user_id) or f"TG:{user_id}"
+        append_log("УДАЛЕНИЕ_ЖАЛОБЫ", admin_nick, user_id, f"Удалено: {deleted_row}")
+
+        return {"status": "ok", "message": "Жалоба удалена ✅"}
+    except gspread.exceptions.APIError as e:
+        logger.error(f"Google Sheets API error: {e}")
+        raise HTTPException(status_code=500, detail="Ошибка Google Sheets")
+    except Exception as e:
+        logger.error(f"Delete complaint error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/available_roles")
 async def get_available_roles_api():
     return {"roles": get_available_roles()}

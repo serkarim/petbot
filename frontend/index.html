@@ -226,7 +226,33 @@
     </div>
     <div id="member-history-data" class="card"></div>
 </div>
+<!-- 👨‍💼 ADMIN PANEL: ПРОСМОТР И УДАЛЕНИЕ ЗАПИСЕЙ -->
+<div id="admin-records-page" class="page">
+    <h1>👨‍💼 Админ-панель</h1>
 
+    <!-- Табы -->
+    <div class="admin-tabs">
+        <div class="admin-tab active" data-type="all">Все</div>
+        <div class="admin-tab" data-type="praise">👏 Похвалы</div>
+        <div class="admin-tab" data-type="pred">⚠️ Преды</div>
+        <div class="admin-tab" data-type="complaint">❌ Жалобы</div>
+    </div>
+
+    <!-- Поиск -->
+    <div class="search-box">
+        <input type="text" id="records-search" placeholder="🔍 Поиск по нику или причине...">
+    </div>
+
+    <!-- Список записей -->
+    <div id="admin-records-list" class="admin-records-list">
+        <div class="loading-spinner"></div>
+    </div>
+
+    <!-- Кнопка обновления -->
+    <button onclick="loadAdminRecords(currentRecordType)" style="margin-top:20px;">
+        🔄 Обновить список
+    </button>
+</div>
 <!-- ==================== -->
 <!-- 🎖 Смена разряда -->
 <!-- ==================== -->

@@ -79,7 +79,18 @@ function navigate(page) {
     } else if (page === 'devlogs') {
         loadDevlogs();
     }
+    // 🔥 Добавляем новую страницу
+    else if (pageId === 'admin_records') {
+        // Проверка на админа
+        if (!currentUser?.id || !ADMIN_IDS.includes(currentUser.id)) {
+            tg.showAlert('🔒 Доступ только для админов');
+            return;
+        }
+        initAdminPanel(); // инициализируем при первом открытии
+    }
+
 }
+
 
 function showPage(pageId) {
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -763,7 +774,190 @@ async function loadRoles() {
         document.getElementById('roles-data').innerHTML = '<p class="error-message">❌ Ошибка</p>';
     }
 }
+// ============ АДМИН: ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ============
+let currentRecordType = 'all';
+let allRecords = { praises: [], preds: [], complaints: [] };
 
+// ============ ЗАГРУЗКА ЗАПИСЕЙ ============
+async function loadAdminRecords(type = 'all') {
+    const listEl = document.getElementById('admin-records-list');
+    if (!listEl) return;
+
+    listEl.innerHTML = '<div class="loading-spinner"></div>';
+    currentRecordType = type;
+
+    try {
+        const response = await fetch(`/api/admin/records?record_type=${type}&user_id=${currentUser.id}`);
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.detail || 'Ошибка загрузки');
+        }
+
+        allRecords = await response.json();
+        renderAdminRecords(type);
+
+    } catch (error) {
+        listEl.innerHTML = `<div class="error-message">❌ ${error.message}</div>`;
+        console.error('Load records error:', error);
+    }
+}
+
+// ============ ОТРИСОВКА ЗАПИСЕЙ ============
+function renderAdminRecords(type, searchQuery = '') {
+    const listEl = document.getElementById('admin-records-list');
+    if (!listEl) return;
+
+    let records = [];
+    let recordType = '';
+
+    if (type === 'all' || type === 'praise') records = records.concat(allRecords.praises.map(r => ({...r, _type: 'praise'})));
+    if (type === 'all' || type === 'pred') records = records.concat(allRecords.preds.map(r => ({...r, _type: 'pred'})));
+    if (type === 'all' || type === 'complaint') records = records.concat(allRecords.complaints.map(r => ({...r, _type: 'complaint'})));
+
+    // 🔍 Фильтр поиска
+    if (searchQuery) {
+        const q = searchQuery.toLowerCase();
+        records = records.filter(r =>
+            r.to?.toLowerCase().includes(q) ||
+            r.from?.toLowerCase().includes(q) ||
+            r.reason?.toLowerCase().includes(q)
+        );
+    }
+
+    // 📦 Пустой список
+    if (records.length === 0) {
+        listEl.innerHTML = `
+            <div class="empty-state">
+                <div class="icon">📭</div>
+                <p>Записей не найдено</p>
+            </div>
+        `;
+        return;
+    }
+
+    // 📋 Сортировка: новые сверху
+    records.sort((a, b) => b.row_index - a.row_index);
+
+    // 🎨 Генерация HTML
+    listEl.innerHTML = records.map(record => {
+        const typeClass = record._type === 'praise' ? 'praise' : record._type === 'pred' ? 'pred' : 'complaint';
+        const typeIcon = record._type === 'praise' ? '👏' : record._type === 'pred' ? '⚠️' : '❌';
+        const typeName = record._type === 'praise' ? 'ПОХВАЛА' : record._type === 'pred' ? 'ПРЕДУПРЕЖДЕНИЕ' : 'ЖАЛОБА';
+        const endpoint = record._type === 'praise' ? 'praise' : record._type === 'pred' ? 'pred' : 'complaint';
+
+        return `
+            <div class="record-item ${typeClass}" data-type="${record._type}" data-index="${record.row_index}">
+                <div class="record-info">
+                    <div class="record-type">${typeIcon} ${typeName}</div>
+                    <div><strong>Кому:</strong> @${escapeHtml(record.to)}</div>
+                    <div><strong>От:</strong> @${escapeHtml(record.from)}</div>
+                    <div class="record-content">📝 ${escapeHtml(record.reason)}</div>
+                    <div class="record-meta">📅 ${escapeHtml(record.date || '')}</div>
+                </div>
+                <div class="record-actions">
+                    <button class="btn-delete" onclick="deleteRecord('${endpoint}', ${record.row_index})">
+                        🗑️ Удалить
+                    </button>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+// ============ УДАЛЕНИЕ ЗАПИСИ ============
+async function deleteRecord(type, rowIndex) {
+    const typeName = type === 'praise' ? 'похвалу' : type === 'pred' ? 'предупреждение' : 'жалобу';
+
+    // 🔔 Подтверждение
+    if (!confirm(`⚠️ Вы уверены, что хотите удалить эту ${typeName}?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/admin/${type}/${rowIndex}?user_id=${currentUser.id}`, {
+            method: 'DELETE'
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+            // ✅ Успех: удаляем из массива и перерисовываем
+            if (type === 'praise') {
+                allRecords.praises = allRecords.praises.filter(r => r.row_index !== rowIndex);
+            } else if (type === 'pred') {
+                allRecords.preds = allRecords.preds.filter(r => r.row_index !== rowIndex);
+            } else if (type === 'complaint') {
+                allRecords.complaints = allRecords.complaints.filter(r => r.row_index !== rowIndex);
+            }
+            renderAdminRecords(currentRecordType, document.getElementById('records-search')?.value || '');
+            tg.showAlert(result.message || 'Запись удалена ✅');
+        } else {
+            throw new Error(result.detail || 'Ошибка удаления');
+        }
+    } catch (error) {
+        tg.showAlert('❌ ' + error.message);
+        console.error('Delete record error:', error);
+        // 🔄 Перезагружаем список на всякий случай
+        loadAdminRecords(currentRecordType);
+    }
+}
+
+// ============ ПОИСК ============
+function setupRecordsSearch() {
+    const searchInput = document.getElementById('records-search');
+    if (!searchInput) return;
+
+    let debounceTimer;
+    searchInput.addEventListener('input', (e) => {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+            renderAdminRecords(currentRecordType, e.target.value.trim());
+        }, 300);
+    });
+}
+
+// ============ ПЕРЕКЛЮЧЕНИЕ ТАБОВ ============
+function setupAdminTabs() {
+    document.querySelectorAll('.admin-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            // Активный таб
+            document.querySelectorAll('.admin-tab').forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+
+            // Загрузка
+            const type = tab.dataset.type;
+            loadAdminRecords(type);
+
+            // Очистка поиска
+            const searchInput = document.getElementById('records-search');
+            if (searchInput) searchInput.value = '';
+        });
+    });
+}
+
+// ============ ВСПОМОГАТЕЛЬНАЯ: ЭКРАНИРОВАНИЕ ============
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// ============ ИНИЦИАЛИЗАЦИЯ АДМИН-ПАНЕЛИ ============
+function initAdminPanel() {
+    setupAdminTabs();
+    setupRecordsSearch();
+
+    // Автозагрузка при открытии страницы
+    const observer = new MutationObserver(() => {
+        const adminPage = document.getElementById('admin-records-page');
+        if (adminPage && adminPage.classList.contains('active')) {
+            loadAdminRecords('all');
+            observer.disconnect();
+        }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+}
 // =========================
 // 🚀 ЗАПУСК
 // =========================
