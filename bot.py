@@ -1497,7 +1497,7 @@ async def apps_archive(callback: types.CallbackQuery):
 # 📊 SQSTAT PARSER
 # =========================
 async def fetch_sqstat_profile(steam_id: str) -> dict | None:
-    """Парсит статистику игрока с breaking.proxy.sqstat.ru"""
+    """Парсит статистику с breaking.proxy.sqstat.ru/player/{steam_id}"""
     import aiohttp
     from bs4 import BeautifulSoup
     import re
@@ -1507,7 +1507,7 @@ async def fetch_sqstat_profile(steam_id: str) -> dict | None:
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, timeout=15, headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                "User-Agent": "Mozilla/5.0"
             }) as response:
                 if response.status != 200:
                     return None
@@ -1515,100 +1515,67 @@ async def fetch_sqstat_profile(steam_id: str) -> dict | None:
 
         soup = BeautifulSoup(html, 'lxml')
         stats = {}
-
-        # 🔹 Имя/ранг игрока (первый заголовок после ранга)
-        rank = soup.find(string=lambda text: text and "Ранг" in text)
-        if rank:
-            rank_block = rank.find_parent()
-            stats['rank'] = rank_block.get_text(strip=True).replace("Ранг", "").strip()
-
-        # 🔹 Парсим основной текст страницы для поиска меток
         text_content = soup.get_text(separator='\n', strip=True)
-        lines = [line.strip() for line in text_content.split('\n') if line.strip()]
+        lines = [l.strip() for l in text_content.split('\n') if l.strip()]
 
-        # 🔹 Функция поиска значения после метки
-        def find_after(label: str, context: str, lines_list: list) -> str | None:
-            # Вариант 1: ищем в сплошном тексте
+        # Поиск значения после метки
+        def find_value(label: str):
             pattern = rf'{re.escape(label)}\s*[:\s]*\n?\s*([^\n]+?)(?:\n|$)'
-            match = re.search(pattern, context, re.IGNORECASE)
+            match = re.search(pattern, text_content, re.IGNORECASE)
             if match:
-                return match.group(1).strip()
-            # Вариант 2: ищем в списке строк (метка, затем значение)
-            for i, line in enumerate(lines_list):
-                if label.lower() in line.lower():
-                    if i + 1 < len(lines_list):
-                        next_line = lines_list[i + 1].strip()
-                        if next_line and not any(
-                                x in next_line.lower() for x in ['убийства', 'смерти', 'побед', 'урон']):
-                            return next_line
+                val = match.group(1).strip()
+                return re.sub(r'[^\d.,%]', '', val) if any(c.isdigit() for c in val) else val
+            for i, line in enumerate(lines):
+                if label.lower() in line.lower() and i + 1 < len(lines):
+                    nxt = lines[i + 1].strip()
+                    if nxt and not any(x in nxt.lower() for x in ['убийства', 'смерти', 'матч']):
+                        return re.sub(r'[^\d.,%]', '', nxt) if any(c.isdigit() for c in nxt) else nxt
             return None
 
-        # 🔹 Извлекаем ключевые статы (по русским меткам)
-        stats['kd'] = find_after('К/Д', text_content, lines)
-        stats['winrate'] = find_after('Винрейт', text_content, lines)
+        # Ключевые метрики
+        stats['kd'] = find_value('К/Д')
+        stats['winrate'] = find_value('Винрейт')
+        stats['kills'] = find_value('УБИЙСТВА')
+        stats['deaths'] = find_value('СМЕРТИ')
+        stats['damage'] = find_value('УРОН')
+        stats['revives'] = find_value('ПОДНЯТИЯ')
+        stats['matches'] = find_value('МАТЧЕЙ')
+        stats['wins'] = find_value('ПОБЕД')
+        stats['losses'] = find_value('ПРОИГРЫШЕЙ')
+        stats['playtime'] = find_value('ОНЛАЙН')
 
-        # Статы из основной таблицы (ищем по точным меткам)
-        stat_mapping = {
-            'МАТЧЕЙ': 'matches',
-            'ПОБЕД': 'wins',
-            'ПРОИГРЫШЕЙ': 'losses',
-            'УБИЙСТВА': 'kills',
-            'СМЕРТИ': 'deaths',
-            'УРОН': 'damage',
-            'ПОДНЯТИЯ': 'revives',
-            'ТИМКИЛЛЫ': 'teamkills',
-            'ОНЛАЙН': 'playtime'
-        }
+        # Топ оружие (упрощённо)
+        weapons = []
+        for i, line in enumerate(lines):
+            if any(w in line for w in ['AK', 'M4', 'SCAR', 'M16', 'QBZ', 'AUG']):
+                kills = find_value(line.split()[0]) if line else None
+                if kills and kills.isdigit():
+                    weapons.append({'name': line.split()[0], 'kills': kills})
+                    if len(weapons) >= 3:
+                        break
+        stats['top_weapons'] = weapons
 
-        for label, key in stat_mapping.items():
-            value = find_after(label, text_content, lines)
-            if value:
-                # Очищаем числовые значения от пробелов и запятых
-                cleaned = re.sub(r'[^\d.,]', '', value)
-                stats[key] = cleaned if cleaned else value
-
-        # 🔹 Парсим таблицу "Киты" (классы + время)
-        kits = {}
-        kit_table = soup.find('table')
-        if kit_table:
-            rows = kit_table.find_all('tr')[1:]  # пропускаем заголовок если есть
-            for row in rows:
-                cols = row.find_all(['td', 'th'])
-                if len(cols) >= 2:
-                    kit_name = cols[0].get_text(strip=True)
-                    kit_time = cols[1].get_text(strip=True)
-                    if kit_name and kit_time and 'ч' in kit_time:  # фильтр по времени
-                        kits[kit_name] = kit_time
-        stats['kits'] = kits
-
-        # 🔹 Последние матчи (таблица "Матчи")
+        # Последние матчи
         matches = []
-        # Ищем все таблицы, берём последнюю (матчи)
-        tables = soup.find_all('table')
-        if tables:
-            matches_table = tables[-1]  # последняя таблица обычно матчи
-            rows = matches_table.find_all('tr')[1:]  # без заголовка
-            for row in rows[:5]:  # последние 5 матчей
-                cols = row.find_all(['td', 'th'])
-                if len(cols) >= 3:
-                    match_info = {
-                        'map': cols[1].get_text(strip=True),
-                        'result': cols[2].get_text(strip=True)  # Да/Нет/-
-                    }
-                    if match_info['map']:
-                        matches.append(match_info)
+        for i, line in enumerate(lines):
+            if any(m in line for m in ['Breakwater', 'Gorod', 'Lashkar', 'Khanji', 'Tallil']):
+                result = "⚪"
+                if i + 1 < len(lines):
+                    nxt = lines[i + 1].lower()
+                    if 'да' in nxt or 'победа' in nxt:
+                        result = "✅"
+                    elif 'нет' in nxt or 'пораж' in nxt:
+                        result = "❌"
+                matches.append({'map': line[:30], 'result': result})
+                if len(matches) >= 3:
+                    break
         stats['recent_matches'] = matches
 
-        # 🔹 Топ оружие (берём первые 3 из раздела)
-        weapons = []
-        weapon_section = soup.find(string=lambda text: text and "Оружие" in text)
-        if weapon_section:
-            # Ищем блоки после заголовка "Оружие"
-            current = weapon_section.find_next()
-            count = 0
-            while current and count < 3:
-                text = current.get_text(strip=True)
-                if text and len(text) > 2 and not any(x in text for x in ['Техника', 'Урон', 'Матчи']):
+        return stats
+
+    except Exception as e:
+        logging.error(f"❌ sqstat parse error: {e}")
+        return None
             # Следующий элемент - количество убийств
 # =========================
 # 👤 ПРОФИЛЬ
