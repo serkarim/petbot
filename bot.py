@@ -1619,7 +1619,7 @@ async def my_profile(callback: types.CallbackQuery):
         user_id = callback.from_user.id
         await callback.answer()
 
-        # 🔹 Проверка регистрации
+        # Проверка регистрации
         existing_nick = find_member_by_tg_id(user_id)
         if not existing_nick:
             await callback.answer("❌ Вы не зарегистрированы", show_alert=True)
@@ -1630,12 +1630,12 @@ async def my_profile(callback: types.CallbackQuery):
             await callback.answer("❌ Данные не найдены", show_alert=True)
             return
 
-        # 🔹 Базовая информация из Google Sheets
+        # Базовая информация
         status_emoji = "✅" if info['desirable'] == "желателен" else "❌"
         safe_nick = html_lib.escape(info['nick'])
         steam_id = info.get('steam_id', 'N/A')
 
-        # 🔹 Формируем основную часть профиля
+        # Формируем основную часть профиля
         text = f"👤 Ваш профиль\n"
         text += f"🎮 {safe_nick}\n"
         text += f"🆔 `{steam_id}`\n"
@@ -1646,86 +1646,82 @@ async def my_profile(callback: types.CallbackQuery):
         text += f"📌 {status_emoji} {info['desirable']}\n"
         text += f"🆔 `{user_id}`"
 
-        # 🔹 Если есть Steam ID — пробуем подгрузить sqstat
+        # Если есть валидный Steam ID — пробуем подгрузить sqstat
         if steam_id and steam_id != 'N/A' and steam_id.isdigit():
-            # Показываем индикатор загрузки (не блокируя)
             text += "\n\n🔄 <i>Загружаю статистику с серверов...</i>"
             loading_msg = await callback.message.edit_text(text, reply_markup=None, parse_mode="HTML")
 
-            # Асинхронно парсим sqstat
             sqstats = await fetch_sqstat_profile(steam_id)
 
             if sqstats:
-                if sqstats:
-                    sq_text = f"\n\n🌐 <b>Статистика с сервера:</b>\n"
+                sq_text = f"\n\n🌐 <b>Статистика с сервера:</b>\n"
 
-                    # K/D и Винрейт
-                    if sqstats.get('kd'):
-                        sq_text += f"📊 K/D: <code>{sqstats['kd']}</code>"
-                        if sqstats.get('winrate'):
-                            sq_text += f" | 🏆 WR: <code>{sqstats['winrate']}</code>"
-                        sq_text += "\n"
+                # K/D и Винрейт
+                if sqstats.get('kd'):
+                    sq_text += f"📊 K/D: <code>{sqstats['kd']}</code>"
+                    if sqstats.get('winrate'):
+                        sq_text += f" | 🏆 WR: <code>{sqstats['winrate']}</code>"
+                    sq_text += "\n"
 
-                    # Основные статы
-                    if sqstats.get('kills') or sqstats.get('deaths'):
-                        sq_text += f"⚔️ Убийства: <code>{sqstats.get('kills', '0')}</code>\n"
-                        sq_text += f"💀 Смерти: <code>{sqstats.get('deaths', '0')}</code>\n"
-                    if sqstats.get('damage'):
-                        sq_text += f"💥 Урон: <code>{sqstats['damage']}</code>\n"
-                    if sqstats.get('revives'):
-                        sq_text += f"🩹 Поднятий: <code>{sqstats['revives']}</code>\n"
-                    if sqstats.get('playtime'):
-                        sq_text += f"⏱ В игре: <code>{sqstats['playtime']}</code>\n"
+                # Основные статы
+                if sqstats.get('kills'):
+                    sq_text += f"⚔️ Убийства: <code>{sqstats['kills']}</code>\n"
+                if sqstats.get('deaths'):
+                    sq_text += f"💀 Смерти: <code>{sqstats['deaths']}</code>\n"
+                if sqstats.get('damage'):
+                    sq_text += f"💥 Урон: <code>{sqstats['damage']}</code>\n"
+                if sqstats.get('revives'):
+                    sq_text += f"🩹 Поднятий: <code>{sqstats['revives']}</code>\n"
+                if sqstats.get('playtime'):
+                    sq_text += f"⏱ В игре: <code>{sqstats['playtime']}</code>\n"
 
-                    # Матчи
-                    if sqstats.get('matches'):
-                        wins = sqstats.get('wins', '0')
-                        losses = sqstats.get('losses', '0')
-                        sq_text += f"🎮 Матчей: <code>{sqstats['matches']}</code> | ✅ {wins} | ❌ {losses}\n"
+                # Матчи
+                if sqstats.get('matches'):
+                    wins = sqstats.get('wins', '0')
+                    losses = sqstats.get('losses', '0')
+                    sq_text += f"🎮 Матчей: <code>{sqstats['matches']}</code> | ✅ {wins} | ❌ {losses}\n"
 
-                    # Топ оружие
-                    weapons = sqstats.get('top_weapons', [])
-                    if weapons:
-                        sq_text += f"\n🔫 <b>Топ оружие:</b>\n"
-                        for w in weapons:
-                            sq_text += f"• {html_lib.escape(w['name'])}: <code>{w['kills']}</code>\n"
+                # Топ оружие
+                weapons = sqstats.get('top_weapons', [])
+                if weapons:
+                    sq_text += f"\n🔫 <b>Топ оружие:</b>\n"
+                    for w in weapons:
+                        sq_text += f"• {html_lib.escape(w['name'])}: <code>{w['kills']}</code>\n"
 
-                    # Последние матчи
-                    matches = sqstats.get('recent_matches', [])
-                    if matches:
-                        sq_text += f"\n🗺 <b>Последние карты:</b>\n"
-                        for m in matches[:3]:
-                            result_emoji = {"Да": "✅", "Нет": "❌", "-": "⚪"}.get(m['result'], "⚪")
-                            sq_text += f"{result_emoji} {html_lib.escape(m['map'][:25])}\n"
+                # Последние матчи
+                matches = sqstats.get('recent_matches', [])
+                if matches:
+                    sq_text += f"\n🗺 <b>Последние карты:</b>\n"
+                    for m in matches[:3]:
+                        result_emoji = {"Да": "✅", "Нет": "❌", "-": "⚪"}.get(m['result'], "⚪")
+                        sq_text += f"{result_emoji} {html_lib.escape(m['map'][:25])}\n"
 
-                    text = text.replace("\n\n🔄 <i>Загружаю статистику с серверов...</i>", "") + sq_text
+                text = text.replace("\n\n🔄 <i>Загружаю статистику с серверов...</i>", "") + sq_text
             else:
-                # Если не удалось спарсить — убираем индикатор и добавляем ссылку
                 text = text.replace("\n\n🔄 <i>Загружаю статистику с серверов...</i>", "")
-                text += f"\n\n⚠️ <i>Не удалось загрузить статистику с сервера</i>"
-                text += f"\n🔗 <a href='https://breaking.proxy.sqstat.ru/player/{steam_id}'>Открыть профиль на sqstat</a>"
-        else:
-            # Нет валидного Steam ID
-            text += f"\n\n⚠️ <i>Steam ID не указан или некорректен</i>"
+                text += f"\n\n⚠️ <i>Не удалось загрузить статистику</i>"
+                text += f"\n🔗 <a href='https://breaking.proxy.sqstat.ru/player/{steam_id}'>Открыть на sqstat</a>"
 
-        # 🔹 Формируем клавиатуру
-        keyboard = InlineKeyboardMarkup(row_width=2)
-        keyboard.add(InlineKeyboardButton("📜 Мои преды", callback_data="view_preds"))
-        keyboard.add(InlineKeyboardButton("👏 Мои похвалы", callback_data="view_praises"))
-
-        # Кнопки для sqstat (если есть Steam ID)
-        if steam_id and steam_id != 'N/A' and steam_id.isdigit():
+            # Финальное обновление сообщения
+            keyboard = InlineKeyboardMarkup(row_width=2)
+            keyboard.add(InlineKeyboardButton("📜 Мои преды", callback_data="view_preds"))
+            keyboard.add(InlineKeyboardButton("👏 Мои похвалы", callback_data="view_praises"))
             keyboard.row(
-                InlineKeyboardButton("🔄 Обновить статы", callback_data="my_profile"),
+                InlineKeyboardButton("🔄 Обновить", callback_data="my_profile"),
                 InlineKeyboardButton("🌐 Sqstat", url=f"https://breaking.proxy.sqstat.ru/player/{steam_id}")
             )
+            keyboard.add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
 
-        keyboard.add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
+            await loading_msg.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+        else:
+            # Нет валидного Steam ID — показываем профиль без sqstat
+            keyboard = InlineKeyboardMarkup(row_width=1)
+            keyboard.add(InlineKeyboardButton("📜 Мои преды", callback_data="view_preds"))
+            keyboard.add(InlineKeyboardButton("👏 Мои похвалы", callback_data="view_praises"))
+            keyboard.add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
 
-        # 🔹 Отправляем финальное сообщение
-        await loading_msg.edit_text(text, reply_markup=keyboard,
-                                    parse_mode="HTML") if 'loading_msg' in locals() else await callback.message.edit_text(
-            text, reply_markup=keyboard, parse_mode="HTML")
+            text += f"\n\n⚠️ <i>Steam ID не указан или некорректен</i>"
+            await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
 
     except Exception as e:
         logging.error(f"❌ my_profile: {e}")
