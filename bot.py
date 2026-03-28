@@ -1497,7 +1497,7 @@ async def apps_archive(callback: types.CallbackQuery):
 # 📊 SQSTAT PARSER
 # =========================
 async def fetch_sqstat_profile(steam_id: str) -> dict | None:
-    """Парсит статистику игрока с sqstat proxy"""
+    """Парсит статистику игрока с breaking.proxy.sqstat.ru"""
     import aiohttp
     from bs4 import BeautifulSoup
     import re
@@ -1516,38 +1516,100 @@ async def fetch_sqstat_profile(steam_id: str) -> dict | None:
         soup = BeautifulSoup(html, 'lxml')
         stats = {}
 
-        # Имя игрока
-        name = soup.find('h1') or soup.find('h2') or soup.find('div', class_='player-name')
-        stats['name'] = name.get_text(strip=True) if name else "Неизвестно"
+        # 🔹 Имя/ранг игрока (первый заголовок после ранга)
+        rank = soup.find(string=lambda text: text and "Ранг" in text)
+        if rank:
+            rank_block = rank.find_parent()
+            stats['rank'] = rank_block.get_text(strip=True).replace("Ранг", "").strip()
 
-        # Парсинг через текст (универсально)
-        full_text = soup.get_text(separator='\n', strip=True)
+        # 🔹 Парсим основной текст страницы для поиска меток
+        text_content = soup.get_text(separator='\n', strip=True)
+        lines = [line.strip() for line in text_content.split('\n') if line.strip()]
 
-        patterns = {
-            'kills': r'(?:Убийств|Киллы|Kills)[:\s]*[:\s]*(\d+[\s\d,]*)',
-            'deaths': r'(?:Смертей|Деты|Deaths)[:\s]*[:\s]*(\d+[\s\d,]*)',
-            'score': r'(?:Очки|Скор|Score)[:\s]*[:\s]*([\d\s,]+)',
-            'time_played': r'(?:Время в игре|Время|Playtime)[:\s]*[:\s]*([^\n]+)',
-            'revives': r'(?:Поднятий|Revives)[:\s]*[:\s]*(\d+)',
-            'suppression': r'(?:Подавлений|Suppression)[:\s]*[:\s]*(\d+)',
+        # 🔹 Функция поиска значения после метки
+        def find_after(label: str, context: str, lines_list: list) -> str | None:
+            # Вариант 1: ищем в сплошном тексте
+            pattern = rf'{re.escape(label)}\s*[:\s]*\n?\s*([^\n]+?)(?:\n|$)'
+            match = re.search(pattern, context, re.IGNORECASE)
+            if match:
+                return match.group(1).strip()
+            # Вариант 2: ищем в списке строк (метка, затем значение)
+            for i, line in enumerate(lines_list):
+                if label.lower() in line.lower():
+                    if i + 1 < len(lines_list):
+                        next_line = lines_list[i + 1].strip()
+                        if next_line and not any(
+                                x in next_line.lower() for x in ['убийства', 'смерти', 'побед', 'урон']):
+                            return next_line
+            return None
+
+        # 🔹 Извлекаем ключевые статы (по русским меткам)
+        stats['kd'] = find_after('К/Д', text_content, lines)
+        stats['winrate'] = find_after('Винрейт', text_content, lines)
+
+        # Статы из основной таблицы (ищем по точным меткам)
+        stat_mapping = {
+            'МАТЧЕЙ': 'matches',
+            'ПОБЕД': 'wins',
+            'ПРОИГРЫШЕЙ': 'losses',
+            'УБИЙСТВА': 'kills',
+            'СМЕРТИ': 'deaths',
+            'УРОН': 'damage',
+            'ПОДНЯТИЯ': 'revives',
+            'ТИМКИЛЛЫ': 'teamkills',
+            'ОНЛАЙН': 'playtime'
         }
 
-        for key, pattern in patterns.items():
-            match = re.search(pattern, full_text, re.IGNORECASE)
-            if match:
-                stats[key] = match.group(1).strip().replace(' ', '').replace(',', '')
+        for label, key in stat_mapping.items():
+            value = find_after(label, text_content, lines)
+            if value:
+                # Очищаем числовые значения от пробелов и запятых
+                cleaned = re.sub(r'[^\d.,]', '', value)
+                stats[key] = cleaned if cleaned else value
 
-        # История игр (упрощённо)
-        games = []
-        for h4 in soup.find_all('h4')[:5]:
-            games.append({'map': h4.get_text(strip=True), 'date': ''})
-        stats['recent_games'] = games
+        # 🔹 Парсим таблицу "Киты" (классы + время)
+        kits = {}
+        kit_table = soup.find('table')
+        if kit_table:
+            rows = kit_table.find_all('tr')[1:]  # пропускаем заголовок если есть
+            for row in rows:
+                cols = row.find_all(['td', 'th'])
+                if len(cols) >= 2:
+                    kit_name = cols[0].get_text(strip=True)
+                    kit_time = cols[1].get_text(strip=True)
+                    if kit_name and kit_time and 'ч' in kit_time:  # фильтр по времени
+                        kits[kit_name] = kit_time
+        stats['kits'] = kits
 
-        return stats
+        # 🔹 Последние матчи (таблица "Матчи")
+        matches = []
+        # Ищем все таблицы, берём последнюю (матчи)
+        tables = soup.find_all('table')
+        if tables:
+            matches_table = tables[-1]  # последняя таблица обычно матчи
+            rows = matches_table.find_all('tr')[1:]  # без заголовка
+            for row in rows[:5]:  # последние 5 матчей
+                cols = row.find_all(['td', 'th'])
+                if len(cols) >= 3:
+                    match_info = {
+                        'map': cols[1].get_text(strip=True),
+                        'result': cols[2].get_text(strip=True)  # Да/Нет/-
+                    }
+                    if match_info['map']:
+                        matches.append(match_info)
+        stats['recent_matches'] = matches
 
-    except Exception as e:
-        logging.error(f"❌ sqstat parse error for {steam_id}: {e}")
-        return None
+        # 🔹 Топ оружие (берём первые 3 из раздела)
+        weapons = []
+        weapon_section = soup.find(string=lambda text: text and "Оружие" in text)
+        if weapon_section:
+            # Ищем блоки после заголовка "Оружие"
+            current = weapon_section.find_next()
+            count = 0
+            while current and count < 3:
+                text = current.get_text(strip=True)
+                if text and len(text) > 2 and not any(x in text for x in ['Техника', 'Урон', 'Матчи']):
+            # Следующий элемент - количество убийств
 # =========================
 # 👤 ПРОФИЛЬ
 # =========================
@@ -1594,44 +1656,49 @@ async def my_profile(callback: types.CallbackQuery):
             sqstats = await fetch_sqstat_profile(steam_id)
 
             if sqstats:
-                # Добавляем статы из sqstat
-                sq_text = f"\n\n🌐 <b>Статистика с сервера (sqstat):</b>\n"
+                if sqstats:
+                    sq_text = f"\n\n🌐 <b>Статистика с сервера:</b>\n"
 
-                # K/D расчет
-                kills = sqstats.get('kills', '0').replace(',', '').replace(' ', '')
-                deaths = sqstats.get('deaths', '0').replace(',', '').replace(' ', '')
-                try:
-                    k = int(kills) if kills.isdigit() else 0
-                    d = int(deaths) if deaths.isdigit() else 0
-                    kd = f"{k / d:.2f}" if d > 0 else str(k)
-                    sq_text += f"⚔️ Убийства: <code>{kills}</code>\n"
-                    sq_text += f"💀 Смерти: <code>{deaths}</code>\n"
-                    sq_text += f"📊 K/D: <code>{kd}</code>\n"
-                except:
-                    if kills: sq_text += f"⚔️ Убийства: <code>{kills}</code>\n"
-                    if deaths: sq_text += f"💀 Смерти: <code>{deaths}</code>\n"
-
-                if sqstats.get('score'):
-                    sq_text += f"🏆 Очки: <code>{sqstats['score']}</code>\n"
-                if sqstats.get('time_played'):
-                    sq_text += f"⏱ В игре: <code>{sqstats['time_played']}</code>\n"
-                if sqstats.get('revives'):
-                    sq_text += f"🩹 Поднятий: <code>{sqstats['revives']}</code>\n"
-                if sqstats.get('suppression'):
-                    sq_text += f"🔇 Подавлений: <code>{sqstats['suppression']}</code>\n"
-
-                # Последние игры (если есть)
-                recent = sqstats.get('recent_games', [])
-                if recent:
-                    sq_text += f"\n🎮 <b>Последние игры:</b>\n"
-                    for i, game in enumerate(recent[:3], 1):
-                        map_name = html_lib.escape(game.get('map', 'Неизвестно')[:25])
-                        sq_text += f"{i}. {map_name}"
-                        if game.get('date'):
-                            sq_text += f" | {game['date']}"
+                    # K/D и Винрейт
+                    if sqstats.get('kd'):
+                        sq_text += f"📊 K/D: <code>{sqstats['kd']}</code>"
+                        if sqstats.get('winrate'):
+                            sq_text += f" | 🏆 WR: <code>{sqstats['winrate']}</code>"
                         sq_text += "\n"
 
-                text = text.replace("\n\n🔄 <i>Загружаю статистику с серверов...</i>", "") + sq_text
+                    # Основные статы
+                    if sqstats.get('kills') or sqstats.get('deaths'):
+                        sq_text += f"⚔️ Убийства: <code>{sqstats.get('kills', '0')}</code>\n"
+                        sq_text += f"💀 Смерти: <code>{sqstats.get('deaths', '0')}</code>\n"
+                    if sqstats.get('damage'):
+                        sq_text += f"💥 Урон: <code>{sqstats['damage']}</code>\n"
+                    if sqstats.get('revives'):
+                        sq_text += f"🩹 Поднятий: <code>{sqstats['revives']}</code>\n"
+                    if sqstats.get('playtime'):
+                        sq_text += f"⏱ В игре: <code>{sqstats['playtime']}</code>\n"
+
+                    # Матчи
+                    if sqstats.get('matches'):
+                        wins = sqstats.get('wins', '0')
+                        losses = sqstats.get('losses', '0')
+                        sq_text += f"🎮 Матчей: <code>{sqstats['matches']}</code> | ✅ {wins} | ❌ {losses}\n"
+
+                    # Топ оружие
+                    weapons = sqstats.get('top_weapons', [])
+                    if weapons:
+                        sq_text += f"\n🔫 <b>Топ оружие:</b>\n"
+                        for w in weapons:
+                            sq_text += f"• {html_lib.escape(w['name'])}: <code>{w['kills']}</code>\n"
+
+                    # Последние матчи
+                    matches = sqstats.get('recent_matches', [])
+                    if matches:
+                        sq_text += f"\n🗺 <b>Последние карты:</b>\n"
+                        for m in matches[:3]:
+                            result_emoji = {"Да": "✅", "Нет": "❌", "-": "⚪"}.get(m['result'], "⚪")
+                            sq_text += f"{result_emoji} {html_lib.escape(m['map'][:25])}\n"
+
+                    text = text.replace("\n\n🔄 <i>Загружаю статистику с серверов...</i>", "") + sq_text
             else:
                 # Если не удалось спарсить — убираем индикатор и добавляем ссылку
                 text = text.replace("\n\n🔄 <i>Загружаю статистику с серверов...</i>", "")
