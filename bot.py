@@ -1492,6 +1492,62 @@ async def apps_archive(callback: types.CallbackQuery):
     except Exception as e:
         logging.error(f"❌ apps_archive: {e}", exc_info=True)
 
+
+# =========================
+# 📊 SQSTAT PARSER
+# =========================
+async def fetch_sqstat_profile(steam_id: str) -> dict | None:
+    """Парсит статистику игрока с sqstat proxy"""
+    import aiohttp
+    from bs4 import BeautifulSoup
+    import re
+
+    url = f"https://breaking.proxy.sqstat.ru/player/{steam_id}"
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=15, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            }) as response:
+                if response.status != 200:
+                    return None
+                html = await response.text()
+
+        soup = BeautifulSoup(html, 'lxml')
+        stats = {}
+
+        # Имя игрока
+        name = soup.find('h1') or soup.find('h2') or soup.find('div', class_='player-name')
+        stats['name'] = name.get_text(strip=True) if name else "Неизвестно"
+
+        # Парсинг через текст (универсально)
+        full_text = soup.get_text(separator='\n', strip=True)
+
+        patterns = {
+            'kills': r'(?:Убийств|Киллы|Kills)[:\s]*[:\s]*(\d+[\s\d,]*)',
+            'deaths': r'(?:Смертей|Деты|Deaths)[:\s]*[:\s]*(\d+[\s\d,]*)',
+            'score': r'(?:Очки|Скор|Score)[:\s]*[:\s]*([\d\s,]+)',
+            'time_played': r'(?:Время в игре|Время|Playtime)[:\s]*[:\s]*([^\n]+)',
+            'revives': r'(?:Поднятий|Revives)[:\s]*[:\s]*(\d+)',
+            'suppression': r'(?:Подавлений|Suppression)[:\s]*[:\s]*(\d+)',
+        }
+
+        for key, pattern in patterns.items():
+            match = re.search(pattern, full_text, re.IGNORECASE)
+            if match:
+                stats[key] = match.group(1).strip().replace(' ', '').replace(',', '')
+
+        # История игр (упрощённо)
+        games = []
+        for h4 in soup.find_all('h4')[:5]:
+            games.append({'map': h4.get_text(strip=True), 'date': ''})
+        stats['recent_games'] = games
+
+        return stats
+
+    except Exception as e:
+        logging.error(f"❌ sqstat parse error for {steam_id}: {e}")
+        return None
 # =========================
 # 👤 ПРОФИЛЬ
 # =========================
@@ -1499,26 +1555,114 @@ async def apps_archive(callback: types.CallbackQuery):
 async def my_profile(callback: types.CallbackQuery):
     try:
         user_id = callback.from_user.id
+        await callback.answer()
+
+        # 🔹 Проверка регистрации
         existing_nick = find_member_by_tg_id(user_id)
         if not existing_nick:
             await callback.answer("❌ Вы не зарегистрированы", show_alert=True)
             return
+
         info = get_member_info(existing_nick)
         if not info:
             await callback.answer("❌ Данные не найдены", show_alert=True)
             return
+
+        # 🔹 Базовая информация из Google Sheets
         status_emoji = "✅" if info['desirable'] == "желателен" else "❌"
         safe_nick = html_lib.escape(info['nick'])
-        text = f"👤 Ваш профиль\n🎮 {safe_nick}\n🆔 `{info['steam_id']}`\n🎖 {info['role']}\n⚠️ {info['warns']}\n👏 {info['praises']}\n📊 {info['score']}\n📌 {status_emoji} {info['desirable']}\n🆔 `{user_id}`"
-        keyboard = InlineKeyboardMarkup()
-        keyboard.add(InlineKeyboardButton("📜 Мои преды ", callback_data="view_preds"))
-        keyboard.add(InlineKeyboardButton("👏 Мои похвалы ", callback_data="view_praises"))
-        keyboard.add(InlineKeyboardButton("🏠 В меню ", callback_data="back_menu"))
+        steam_id = info.get('steam_id', 'N/A')
 
-        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
-        await callback.answer()
+        # 🔹 Формируем основную часть профиля
+        text = f"👤 Ваш профиль\n"
+        text += f"🎮 {safe_nick}\n"
+        text += f"🆔 `{steam_id}`\n"
+        text += f"🎖 {info['role']}\n"
+        text += f"⚠️ {info['warns']}\n"
+        text += f"👏 {info['praises']}\n"
+        text += f"📊 {info['score']}\n"
+        text += f"📌 {status_emoji} {info['desirable']}\n"
+        text += f"🆔 `{user_id}`"
+
+        # 🔹 Если есть Steam ID — пробуем подгрузить sqstat
+        if steam_id and steam_id != 'N/A' and steam_id.isdigit():
+            # Показываем индикатор загрузки (не блокируя)
+            text += "\n\n🔄 <i>Загружаю статистику с серверов...</i>"
+            loading_msg = await callback.message.edit_text(text, reply_markup=None, parse_mode="HTML")
+
+            # Асинхронно парсим sqstat
+            sqstats = await fetch_sqstat_profile(steam_id)
+
+            if sqstats:
+                # Добавляем статы из sqstat
+                sq_text = f"\n\n🌐 <b>Статистика с сервера (sqstat):</b>\n"
+
+                # K/D расчет
+                kills = sqstats.get('kills', '0').replace(',', '').replace(' ', '')
+                deaths = sqstats.get('deaths', '0').replace(',', '').replace(' ', '')
+                try:
+                    k = int(kills) if kills.isdigit() else 0
+                    d = int(deaths) if deaths.isdigit() else 0
+                    kd = f"{k / d:.2f}" if d > 0 else str(k)
+                    sq_text += f"⚔️ Убийства: <code>{kills}</code>\n"
+                    sq_text += f"💀 Смерти: <code>{deaths}</code>\n"
+                    sq_text += f"📊 K/D: <code>{kd}</code>\n"
+                except:
+                    if kills: sq_text += f"⚔️ Убийства: <code>{kills}</code>\n"
+                    if deaths: sq_text += f"💀 Смерти: <code>{deaths}</code>\n"
+
+                if sqstats.get('score'):
+                    sq_text += f"🏆 Очки: <code>{sqstats['score']}</code>\n"
+                if sqstats.get('time_played'):
+                    sq_text += f"⏱ В игре: <code>{sqstats['time_played']}</code>\n"
+                if sqstats.get('revives'):
+                    sq_text += f"🩹 Поднятий: <code>{sqstats['revives']}</code>\n"
+                if sqstats.get('suppression'):
+                    sq_text += f"🔇 Подавлений: <code>{sqstats['suppression']}</code>\n"
+
+                # Последние игры (если есть)
+                recent = sqstats.get('recent_games', [])
+                if recent:
+                    sq_text += f"\n🎮 <b>Последние игры:</b>\n"
+                    for i, game in enumerate(recent[:3], 1):
+                        map_name = html_lib.escape(game.get('map', 'Неизвестно')[:25])
+                        sq_text += f"{i}. {map_name}"
+                        if game.get('date'):
+                            sq_text += f" | {game['date']}"
+                        sq_text += "\n"
+
+                text = text.replace("\n\n🔄 <i>Загружаю статистику с серверов...</i>", "") + sq_text
+            else:
+                # Если не удалось спарсить — убираем индикатор и добавляем ссылку
+                text = text.replace("\n\n🔄 <i>Загружаю статистику с серверов...</i>", "")
+                text += f"\n\n⚠️ <i>Не удалось загрузить статистику с сервера</i>"
+                text += f"\n🔗 <a href='https://breaking.proxy.sqstat.ru/player/{steam_id}'>Открыть профиль на sqstat</a>"
+        else:
+            # Нет валидного Steam ID
+            text += f"\n\n⚠️ <i>Steam ID не указан или некорректен</i>"
+
+        # 🔹 Формируем клавиатуру
+        keyboard = InlineKeyboardMarkup(row_width=2)
+        keyboard.add(InlineKeyboardButton("📜 Мои преды", callback_data="view_preds"))
+        keyboard.add(InlineKeyboardButton("👏 Мои похвалы", callback_data="view_praises"))
+
+        # Кнопки для sqstat (если есть Steam ID)
+        if steam_id and steam_id != 'N/A' and steam_id.isdigit():
+            keyboard.row(
+                InlineKeyboardButton("🔄 Обновить статы", callback_data="my_profile"),
+                InlineKeyboardButton("🌐 Sqstat", url=f"https://breaking.proxy.sqstat.ru/player/{steam_id}")
+            )
+
+        keyboard.add(InlineKeyboardButton("🏠 В меню", callback_data="back_menu"))
+
+        # 🔹 Отправляем финальное сообщение
+        await loading_msg.edit_text(text, reply_markup=keyboard,
+                                    parse_mode="HTML") if 'loading_msg' in locals() else await callback.message.edit_text(
+            text, reply_markup=keyboard, parse_mode="HTML")
+
     except Exception as e:
         logging.error(f"❌ my_profile: {e}")
+        await callback.answer("❌ Ошибка загрузки профиля", show_alert=True)
 
 
 @dp.callback_query_handler(lambda c: c.data == "view_preds")
