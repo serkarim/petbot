@@ -1518,57 +1518,90 @@ async def fetch_sqstat_profile(steam_id: str) -> dict | None:
         text_content = soup.get_text(separator='\n', strip=True)
         lines = [l.strip() for l in text_content.split('\n') if l.strip()]
 
-        # Поиск значения после метки
-        def find_value(label: str):
-            pattern = rf'{re.escape(label)}\s*[:\s]*\n?\s*([^\n]+?)(?:\n|$)'
+        # 🔹 Улучшенная функция поиска числовых значений
+        def find_numeric_value(label: str, allow_percent: bool = False):
+            """Ищет числовое значение после метки, игнорируя буквы типа 'м'"""
+            # Паттерн: метка + разделители + число (с запятыми/точками/процентами)
+            percent_pattern = r'[\d\s,]+\.?\d*%' if allow_percent else r'[\d\s,]+\.?\d*'
+            pattern = rf'{re.escape(label)}\s*[:\s\n]*\s*({percent_pattern})'
             match = re.search(pattern, text_content, re.IGNORECASE)
             if match:
-                val = match.group(1).strip()
-                return re.sub(r'[^\d.,%]', '', val) if any(c.isdigit() for c in val) else val
-            for i, line in enumerate(lines):
-                if label.lower() in line.lower() and i + 1 < len(lines):
-                    nxt = lines[i + 1].strip()
-                    if nxt and not any(x in nxt.lower() for x in ['убийства', 'смерти', 'матч']):
-                        return re.sub(r'[^\d.,%]', '', nxt) if any(c.isdigit() for c in nxt) else nxt
+                raw = match.group(1).strip()
+                # Очищаем и проверяем, что это действительно число
+                cleaned = re.sub(r'[^\d.,%]', '', raw)
+                if cleaned and (cleaned.replace('.', '').replace(',', '').replace('%', '').isdigit()):
+                    return cleaned.replace(',', '.')  # нормализуем разделитель
             return None
 
-        # Ключевые метрики
-        stats['kd'] = find_value('К/Д')
-        stats['winrate'] = find_value('Винрейт')
-        stats['kills'] = find_value('УБИЙСТВА')
-        stats['deaths'] = find_value('СМЕРТИ')
-        stats['damage'] = find_value('УРОН')
-        stats['revives'] = find_value('ПОДНЯТИЯ')
-        stats['matches'] = find_value('МАТЧЕЙ')
-        stats['wins'] = find_value('ПОБЕД')
-        stats['losses'] = find_value('ПРОИГРЫШЕЙ')
-        stats['playtime'] = find_value('ОНЛАЙН')
+        # 🔹 Функция для поиска любого значения (если нужно не только число)
+        def find_any_value(label: str):
+            pattern = rf'{re.escape(label)}\s*[:\s\n]*\s*([^\n]+?)(?:\n|$)'
+            match = re.search(pattern, text_content, re.IGNORECASE)
+            return match.group(1).strip() if match and match.group(1).strip() else None
 
-        # Топ оружие (упрощённо)
+        # 🔹 Ключевые метрики (только числа)
+        stats['kd'] = find_numeric_value('К/Д')  # может быть 0.69
+        stats['winrate'] = find_numeric_value('Винрейт', allow_percent=True)  # 54.1%
+        stats['kills'] = find_numeric_value('УБИЙСТВА')
+        stats['deaths'] = find_numeric_value('СМЕРТИ')
+        stats['damage'] = find_numeric_value('УРОН')
+        stats['revives'] = find_numeric_value('ПОДНЯТИЯ')
+        stats['matches'] = find_numeric_value('МАТЧЕЙ')
+        stats['wins'] = find_numeric_value('ПОБЕД')
+        stats['losses'] = find_numeric_value('ПРОИГРЫШЕЙ')
+
+        # 🔹 Время в игре (может быть в минутах или формате "2645")
+        raw_playtime = find_numeric_value('ОНЛАЙН')
+        if raw_playtime:
+            try:
+                total_minutes = int(float(raw_playtime.replace(',', '.')))
+                hours = total_minutes // 60
+                minutes = total_minutes % 60
+                stats['playtime'] = f"{hours}ч {minutes:02d}м" if hours > 0 else f"{minutes}м"
+            except:
+                stats['playtime'] = raw_playtime  # fallback если не получилось конвертировать
+        else:
+            # Пробуем найти время в другом формате (например "44ч 05м")
+            alt_time = find_any_value('ОНЛАЙН')
+            if alt_time and any(c.isdigit() for c in alt_time):
+                stats['playtime'] = alt_time[:20]  # обрезаем если слишком длинное
+
+        # 🔹 Топ оружие (ищем строки с названием оружия + числом убийств)
         weapons = []
-        for i, line in enumerate(lines):
-            if any(w in line for w in ['AK', 'M4', 'SCAR', 'M16', 'QBZ', 'AUG']):
-                kills = find_value(line.split()[0]) if line else None
-                if kills and kills.isdigit():
-                    weapons.append({'name': line.split()[0], 'kills': kills})
-                    if len(weapons) >= 3:
-                        break
+        weapon_names = ['M16A4', 'M4A1', 'AK-12', 'AKM', 'SCAR-H', 'QBZ-03', 'AUG-A3', 'MP7', 'M249', 'PKM']
+        for line in lines:
+            for wname in weapon_names:
+                if wname.lower() in line.lower():
+                    # Ищем число в этой же строке или следующей
+                    nums = re.findall(r'[\d]+', line)
+                    if nums:
+                        weapons.append({'name': wname, 'kills': nums[-1]})
+                    break
+            if len(weapons) >= 3:
+                break
         stats['top_weapons'] = weapons
 
-        # Последние матчи
+        # 🔹 Последние матчи (карты)
         matches = []
-        for i, line in enumerate(lines):
-            if any(m in line for m in ['Breakwater', 'Gorod', 'Lashkar', 'Khanji', 'Tallil']):
-                result = "⚪"
-                if i + 1 < len(lines):
-                    nxt = lines[i + 1].lower()
-                    if 'да' in nxt or 'победа' in nxt:
-                        result = "✅"
-                    elif 'нет' in nxt or 'пораж' in nxt:
-                        result = "❌"
-                matches.append({'map': line[:30], 'result': result})
-                if len(matches) >= 3:
-                    break
+        seen_maps = set()
+        for line in lines:
+            # Фильтр по известным картам Squad
+            if any(m in line for m in
+                   ['Gorodok', 'Breakwater', 'Lashkar', 'Khanji', 'Tallil', 'Yehorivka', 'Fallujah']):
+                if line[:30] not in seen_maps:  # избегаем дублей
+                    result = "⚪"
+                    # Ищем результат в соседних строках
+                    idx = lines.index(line) if line in lines else -1
+                    if idx >= 0:
+                        context = ' '.join(lines[max(0, idx - 2):min(len(lines), idx + 3)]).lower()
+                        if any(x in context for x in ['победа', 'да', 'выигрыш']):
+                            result = "✅"
+                        elif any(x in context for x in ['пораж', 'нет', 'проигр']):
+                            result = "❌"
+                    matches.append({'map': line[:30], 'result': result})
+                    seen_maps.add(line[:30])
+            if len(matches) >= 3:
+                break
         stats['recent_matches'] = matches
 
         return stats
