@@ -1656,22 +1656,27 @@ async def my_profile(callback: types.CallbackQuery):
             if sqstats:
                 sq_text = f"\n\n🌐 <b>Статистика с сервера:</b>\n"
 
-                # K/D и Винрейт
-                if sqstats.get('kd'):
-                    sq_text += f"📊 K/D: <code>{sqstats['kd']}</code>"
-                    if sqstats.get('winrate'):
-                        sq_text += f" | 🏆 WR: <code>{sqstats['winrate']}</code>"
-                    sq_text += "\n"
+                # K/D и Винрейт в одну строку
+                kd = sqstats.get('kd', '0')
+                wr = sqstats.get('winrate', '')
+                sq_text += f"📊 K/D: <code>{kd}</code>"
+                if wr:
+                    sq_text += f" | 🏆 WR: <code>{wr}</code>"
+                sq_text += "\n"
 
-                # Основные статы
-                if sqstats.get('kills'):
-                    sq_text += f"⚔️ Убийства: <code>{sqstats['kills']}</code>\n"
-                if sqstats.get('deaths'):
-                    sq_text += f"💀 Смерти: <code>{sqstats['deaths']}</code>\n"
-                if sqstats.get('damage'):
-                    sq_text += f"💥 Урон: <code>{sqstats['damage']}</code>\n"
-                if sqstats.get('revives'):
-                    sq_text += f"🩹 Поднятий: <code>{sqstats['revives']}</code>\n"
+                # Статы в 2 колонки для компактности
+                stats_row1 = []
+                if sqstats.get('kills'): stats_row1.append(f"⚔️ {sqstats['kills']}")
+                if sqstats.get('deaths'): stats_row1.append(f"💀 {sqstats['deaths']}")
+                if stats_row1:
+                    sq_text += f"{'  '.join(stats_row1)}\n"
+
+                stats_row2 = []
+                if sqstats.get('damage'): stats_row2.append(f"💥 {sqstats['damage']} урона")
+                if sqstats.get('revives'): stats_row2.append(f"🩹 {sqstats['revives']} поднятий")
+                if stats_row2:
+                    sq_text += f"{'  '.join(stats_row2)}\n"
+
                 if sqstats.get('playtime'):
                     sq_text += f"⏱ В игре: <code>{sqstats['playtime']}</code>\n"
 
@@ -1693,8 +1698,7 @@ async def my_profile(callback: types.CallbackQuery):
                 if matches:
                     sq_text += f"\n🗺 <b>Последние карты:</b>\n"
                     for m in matches[:3]:
-                        result_emoji = {"Да": "✅", "Нет": "❌", "-": "⚪"}.get(m['result'], "⚪")
-                        sq_text += f"{result_emoji} {html_lib.escape(m['map'][:25])}\n"
+                        sq_text += f"{m['result']} {html_lib.escape(m['map'])}\n"
 
                 text = text.replace("\n\n🔄 <i>Загружаю статистику с серверов...</i>", "") + sq_text
             else:
