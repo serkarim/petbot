@@ -2,8 +2,18 @@ const tg = window.Telegram.WebApp;
 tg.ready();
 tg.expand();
 
+// =========================
+// ⚙️ НАСТРОЙКИ
+// =========================
+// Список Telegram ID администраторов (для дополнительной проверки)
+// Замените на реальные ID: https://t.me/getmyid_bot
+const ADMIN_IDS = [123456789, 987654321];
+
+// =========================
+// 🌍 ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ
+// =========================
 let currentUser = null;
-let isAdmin = false;
+let isAdmin = false;        // флаг из бэкенда
 let isTechAdmin = false;
 let isRegistered = false;
 let userNickname = null;
@@ -11,6 +21,8 @@ let selectedMember = null;
 let selectedBulkMembers = [];
 let currentHistoryMember = null;
 let currentRoleChangeMember = null;
+let currentViewedMember = null;
+let currentRecordTab = 'praises';
 
 // =========================
 // 🚀 ИНИЦИАЛИЗАЦИЯ
@@ -126,7 +138,7 @@ async function loadProfile() {
 }
 
 // =========================
-// 📋 СПИСОК КЛАНА (🔥 ИСПРАВЛЕНО)
+// 📋 СПИСОК КЛАНА
 // =========================
 async function loadClanList() {
     try {
@@ -138,7 +150,6 @@ async function loadClanList() {
             return;
         }
 
-        // 🔥 ИСПРАВЛЕНИЕ: добавляем onclick для каждого участника
         document.getElementById('clan-members').innerHTML = data.members
             .map(m => `
                 <div class="member-item" onclick="selectMember('${m.replace(/'/g, "\\'")}')">
@@ -287,7 +298,7 @@ async function loadStats(period) {
 }
 
 // =========================
-// 🛡 АДМИН МЕНЮ (🔥 ОБНОВЛЕНО)
+// 🛡 АДМИН МЕНЮ
 // =========================
 function renderAdminMenu() {
     let techAdminButtons = '';
@@ -763,11 +774,10 @@ async function loadRoles() {
         document.getElementById('roles-data').innerHTML = '<p class="error-message">❌ Ошибка</p>';
     }
 }
-// ============ ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ============
-let currentViewedMember = null;
-let currentRecordTab = 'praises';
 
-// ============ ОТКРЫТИЕ МОДАЛЬНОГО ОКНА ============
+// =========================
+// 📋 МОДАЛЬНОЕ ОКНО ЗАПИСЕЙ
+// =========================
 async function openMemberRecordsModal(nickname, type = 'praises') {
     currentViewedMember = nickname;
     currentRecordTab = type;
@@ -782,26 +792,21 @@ async function openMemberRecordsModal(nickname, type = 'praises') {
     empty.style.display = 'none';
     modal.classList.add('active');
 
-    // Обновляем активный таб
     document.querySelectorAll('#member-records-modal .admin-tab').forEach(tab => {
         tab.classList.toggle('active', tab.dataset.tab === type);
     });
 
-    // Загружаем данные
     await loadMemberRecords(nickname, type);
 }
 
-// ============ ЗАКРЫТИЕ МОДАЛЬНОГО ОКНА ============
 function closeMemberRecordsModal() {
     const modal = document.getElementById('member-records-modal');
     modal.classList.remove('active');
     currentViewedMember = null;
 }
 
-// ============ ПЕРЕКЛЮЧЕНИЕ ТАБОВ ============
 function switchMemberRecordTab(type) {
     if (!currentViewedMember) return;
-
     currentRecordTab = type;
     document.querySelectorAll('#member-records-modal .admin-tab').forEach(tab => {
         tab.classList.toggle('active', tab.dataset.tab === type);
@@ -809,7 +814,6 @@ function switchMemberRecordTab(type) {
     loadMemberRecords(currentViewedMember, type);
 }
 
-// ============ ЗАГРУЗКА ЗАПИСЕЙ УЧАСТНИКА ============
 async function loadMemberRecords(nickname, type) {
     const list = document.getElementById('member-records-list');
     const empty = document.getElementById('member-records-empty');
@@ -833,7 +837,6 @@ async function loadMemberRecords(nickname, type) {
             return;
         }
 
-        // Сортировка: новые сверху
         result.data.sort((a, b) => b.row_index - a.row_index);
 
         list.innerHTML = result.data.map(record => {
@@ -846,7 +849,7 @@ async function loadMemberRecords(nickname, type) {
                 <div class="record-item ${typeClass}">
                     <div class="record-header">
                         <span class="record-type">${typeLabel}</span>
-                        ${isAdmin() ? `<button class="btn-delete" onclick="deleteMemberRecord('${nickname}', '${deleteEndpoint}', ${record.row_index})">🗑️</button>` : ''}
+                        ${checkIsAdminByList() ? `<button class="btn-delete" onclick="deleteMemberRecord('${nickname}', '${deleteEndpoint}', ${record.row_index})">🗑️</button>` : ''}
                     </div>
                     <div class="record-from">От: @${escapeHtml(record.from)}</div>
                     <div class="record-reason">${escapeHtml(record.reason)}</div>
@@ -861,7 +864,6 @@ async function loadMemberRecords(nickname, type) {
     }
 }
 
-// ============ УДАЛЕНИЕ ЗАПИСИ УЧАСТНИКА ============
 async function deleteMemberRecord(nickname, type, rowIndex) {
     const typeName = type === 'praise' ? 'похвалу' : 'предупреждение';
 
@@ -878,7 +880,6 @@ async function deleteMemberRecord(nickname, type, rowIndex) {
 
         if (response.ok) {
             tg.showAlert(result.message || 'Запись удалена ✅');
-            // Перезагружаем список
             loadMemberRecords(nickname, currentRecordTab);
         } else {
             throw new Error(result.detail || 'Ошибка удаления');
@@ -889,12 +890,20 @@ async function deleteMemberRecord(nickname, type, rowIndex) {
     }
 }
 
-// ============ ПРОВЕРКА: АДМИН ============
-function isAdmin() {
+// =========================
+// 🔐 ПРОВЕРКА: АДМИН ПО СПИСКУ (исправлено!)
+// =========================
+function checkIsAdminByList() {
+    if (typeof ADMIN_IDS === 'undefined') {
+        console.warn('⚠️ ADMIN_IDS не определён');
+        return false;
+    }
     return currentUser?.id && ADMIN_IDS.includes(currentUser.id);
 }
 
-// ============ ВСПОМОГАТЕЛЬНАЯ: ЭКРАНИРОВАНИЕ ============
+// =========================
+// 🔤 ВСПОМОГАТЕЛЬНАЯ: ЭКРАНИРОВАНИЕ
+// =========================
 function escapeHtml(text) {
     if (!text) return '';
     const div = document.createElement('div');
@@ -902,13 +911,16 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-// ============ ЗАКРЫТИЕ МОДАЛКИ ПО КЛИКУ ВНЕ ============
+// =========================
+// 🖱 ЗАКРЫТИЕ МОДАЛКИ ПО КЛИКУ ВНЕ
+// =========================
 document.addEventListener('click', (e) => {
     const modal = document.getElementById('member-records-modal');
     if (e.target === modal) {
         closeMemberRecordsModal();
     }
 });
+
 // =========================
 // 🚀 ЗАПУСК
 // =========================
