@@ -2954,113 +2954,24 @@ async def get_chat_id(message: types.Message):
 #     logging.info(f"📝 JDM-ответ изменён админом {message.from_user.full_name}")
 
 
-@dp.message_handler(commands=["test_jdm"])
-async def test_jdm(message: types.Message):
-    """Админ тестирует JDM-ответ"""
-    if message.from_user.id not in ADMINS:
-        return
-    await message.answer(JDM_RESPONSE, parse_mode="HTML")
-# =========================
-# ⏰ ПЛАНИРОВЩИК
-# =========================
-scheduler = AsyncIOScheduler(timezone=pytz.timezone("Europe/Moscow"))
+
+
+
 
 async def scheduled_report_job():
-    logging.info("⏰ Запуск задачи: отправка отчёта")
-    await send_weekly_report()
-
-async def on_startup(_):
-    if REPORT_CHAT_ID:
-        scheduler.add_job(scheduled_report_job, trigger=CronTrigger(hour=18, minute=30, day_of_week="sat", timezone=pytz.timezone("Europe/Moscow")), id="weekly_report", replace_existing=True)
-        scheduler.start()
-        logging.info("⏰ Планировщик запущен: отчёт каждую субботу в 18:30 МСК")
-        # Проверка девлогов каждые 30 секунд
-        scheduler.add_job(
-            check_new_devlogs,
-            trigger=CronTrigger(second="*/30", timezone=pytz.timezone("Europe/Moscow")),
-            id="check_devlogs",
-            replace_existing=True
-        )
-
-        # # Проверка оповещений каждую минуту
-        # scheduler.add_job(
-        #     check_scheduled_notifications,
-        #     trigger=CronTrigger(minute="*", timezone=pytz.timezone("Europe/Moscow")),
-        #     id="check_notifications",
-        #     replace_existing=True
-        # )
-async def on_shutdown(_):
-    scheduler.shutdown()
-
-
-# =========================
-# 🔄 SCHEDULER: Оповещения
-# =========================
-# async def process_scheduled_notifications():
-#     """Проверка и отправка запланированных оповещений"""
-#     try:
-#         ws = sheet.worksheet("запланированные_оповещения")
-#         rows = ws.get_all_values()[1:]
-#         now = get_msk_time()
-#
-#         for idx, row in enumerate(rows, start=2):
-#             if len(row) < 7:
-#                 continue
-#             status, schedule_time = row[6], row[4]
-#             if status != "ожидает" or schedule_time == "now":
-#                 continue
-#             try:
-#                 scheduled = datetime.strptime(schedule_time, "%d.%m.%Y %H:%M")
-#                 scheduled = pytz.timezone("Europe/Moscow").localize(scheduled)
-#             except:
-#                 continue
-#             if scheduled <= now:
-#                 audience, text, photo_url = row[2], row[3], row[7] if len(row) > 7 else None
-#                 recipients = []
-#
-#                 # 🔹 Получатели
-#                 if audience == "all":
-#                     members_ws = sheet.worksheet("участники клана")
-#                     for r in members_ws.get_all_values()[1:]:
-#                         if len(r) > 8 and r[8].strip().isdigit():
-#                             recipients.append(int(r[8]))
-#                 elif audience == "admins":
-#                     recipients = ADMINS
-#                 elif audience == "role:":
-#                     role = audience.split(":")[1] if ":" in audience else ""
-#                     if role:
-#                         roles_ws = sheet.worksheet("разряды")
-#                         for r in roles_ws.get_all_values()[1:]:
-#                             if len(r) > 1 and r[1].lower() == role.lower():
-#                                 nick = r[0]
-#                                 main_ws = sheet.worksheet("участники клана")
-#                                 for mr in main_ws.get_all_values()[1:]:
-#                                     if mr[0] == nick and len(mr) > 8 and mr[8].strip().isdigit():
-#                                         recipients.append(int(mr[8]))
-#
-#                 # 🔹 Отправка
-#                 for uid in recipients:
-#                     try:
-#                         if photo_url:
-#                             await bot.send_photo(uid, photo=photo_url, caption=f"📢 {text}", parse_mode="HTML")
-#                         else:
-#                             await bot.send_message(uid, text=f"📢 {text}", parse_mode="HTML")
-#                         await asyncio.sleep(0.05)
-#                     except Exception as e:
-#                         logger.error(f"❌ Не отправлено {uid}: {e}")
-#
-#                 # ✅ Обновляем статус
-#                 ws.update_cell(idx, 7, "отправлено")
-#                 logger.info(f"✅ Оповещение #{idx - 1} отправлено")
-#     except Exception as e:
-#         logger.error(f"❌ Scheduler error: {e}")
+    """Еженедельный отчёт"""
+    try:
+        logging.info("⏰ Запуск задачи: отправка отчёта")
+        await send_weekly_report()
+    except Exception as e:
+        logging.error(f"❌ scheduled_report_job: {e}")
 
 
 async def check_new_devlogs():
-    """Проверяет Google Sheets на новые девлоги и отправляет их"""
+    """Проверяет Google Sheets на новые девлоги"""
     try:
         ws = sheet.worksheet("devlogs")
-        rows = ws.get_all_values()[1:]  # без заголовка
+        rows = ws.get_all_values()[1:]
 
         devlog_topic = os.getenv("DEVLOGS_TOPIC_ID")
         report_chat = os.getenv("REPORT_CHAT_ID")
@@ -3071,27 +2982,23 @@ async def check_new_devlogs():
         chat_id = int(report_chat)
         topic_id = int(devlog_topic) if devlog_topic and devlog_topic.isdigit() else None
 
-        for idx, row in enumerate(rows, start=2):  # start=2 т.к. строки с 1, + заголовок
+        for idx, row in enumerate(rows, start=2):
             if len(row) < 8:
                 continue
-
-            sent_flag = row[7].strip().lower()  # 8-й столбец (индекс 7)
+            sent_flag = row[7].strip().lower()
             if sent_flag == "yes":
-                continue  # Уже отправлено
+                continue
 
-            # 📦 Данные девлога
             author = row[1]
             title = row[2]
             content = row[3]
             photo_url = row[6] if len(row) > 6 else None
 
-            # 📝 Формируем текст
             import html
             text = f"📝 <b>Devlog: {html.escape(title)}</b>\n\n"
             text += f"👤 <i>{html.escape(author)}</i>\n\n"
             text += html.escape(content)
 
-            # 📤 Отправка
             try:
                 if photo_url and photo_url.strip():
                     await bot.send_photo(
@@ -3108,26 +3015,81 @@ async def check_new_devlogs():
                         parse_mode="HTML",
                         message_thread_id=topic_id
                     )
-
-                # ✅ Помечаем как отправленный
                 ws.update_cell(idx, 8, "yes")
-                logger.info(f"✅ Девлог #{idx - 1} отправлен")
-
+                logging.info(f"✅ Девлог #{idx - 1} отправлен")
             except Exception as e:
-                logger.error(f"❌ Не отправлен девлог #{idx - 1}: {e}")
-
+                logging.error(f"❌ Не отправлен девлог #{idx - 1}: {e}")
     except Exception as e:
-        logger.error(f"❌ Ошибка check_new_devlogs: {e}")
+        logging.error(f"❌ check_new_devlogs: {e}")
 
-# 🔹 Запуск scheduler'а при старте бота
+
+async def process_scheduled_notifications():
+    """Проверка запланированных оповещений"""
+    try:
+        # Ваш код проверки оповещений...
+        # (оставьте как есть, если используете)
+        pass
+    except Exception as e:
+        logging.error(f"❌ process_scheduled_notifications: {e}")
+
+
 async def on_startup(_):
-    logger.info("✅ Бот запущен")
+    """Запускается при старте бота — ЕДИНАЯ ФУНКЦИЯ"""
+    global scheduler
+
+    logging.info("✅ Бот запущен, инициализация планировщика...")
+
+    # Создаём планировщик с привязкой к текущему event loop
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    from apscheduler.triggers.cron import CronTrigger
+    import pytz
+
+    scheduler = AsyncIOScheduler(timezone=pytz.timezone("Europe/Moscow"), event_loop=asyncio.get_running_loop())
+
+    if REPORT_CHAT_ID:
+        # Еженедельный отчёт: суббота 18:30 МСК
+        scheduler.add_job(
+            scheduled_report_job,
+            trigger=CronTrigger(hour=18, minute=30, day_of_week="sat", timezone=pytz.timezone("Europe/Moscow")),
+            id="weekly_report",
+            replace_existing=True,
+            misfire_grace_time=3600  # 1 час на пропущенный запуск
+        )
+        logging.info("⏰ Задача 'weekly_report' добавлена")
+
+        # Проверка девлогов: каждые 30 секунд
+        scheduler.add_job(
+            check_new_devlogs,
+            trigger=CronTrigger(second="*/30", timezone=pytz.timezone("Europe/Moscow")),
+            id="check_devlogs",
+            replace_existing=True
+        )
+        logging.info("⏰ Задача 'check_devlogs' добавлена")
+
+        # Проверка оповещений: каждые 2 минуты
+        scheduler.add_job(
+            process_scheduled_notifications,
+            trigger=CronTrigger(minute="*/2", timezone=pytz.timezone("Europe/Moscow")),
+            id="check_notifications",
+            replace_existing=True
+        )
+        logging.info("⏰ Задача 'check_notifications' добавлена")
+
+    # 🚀 Запускаем планировщик
     scheduler.start()
+    logging.info("⏰ APScheduler запущен ✅")
 
 
 async def on_shutdown(_):
-    logger.info("🛑 Бот остановлен")
-    scheduler.shutdown()
+    """Корректная остановка"""
+    logging.info("🛑 Остановка бота...")
+
+    if scheduler and scheduler.running:
+        scheduler.shutdown(wait=True)
+        logging.info("⏰ Планировщик остановлен")
+
+    await bot.close()
+    logging.info("🔌 Бот закрыт")
 # =========================
 # 🚀 START
 # =========================
