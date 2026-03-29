@@ -951,62 +951,96 @@ async def reject_clip(callback: types.CallbackQuery):
 
 
 # =========================
-# 🔇 МУТ ЧЕРЕЗ ОТВЕТ НА СООБЩЕНИЕ
+# 🔇 МУТ ЧЕРЕЗ ОТВЕТ НА СООБЩЕНИЕ (ИСПРАВЛЕНО)
 # =========================
-@dp.message_handler(lambda msg: msg.reply_to_message is not None and msg.text, content_types=types.ContentTypes.TEXT)
+@dp.message_handler(
+    lambda msg: (
+            msg.reply_to_message is not None and
+            msg.text and
+            msg.text.strip().lower().startswith(("мут ", "/мут "))
+    ),
+    content_types=types.ContentTypes.TEXT,
+    state="*"  # Работает в любом состоянии
+)
 async def mute_via_reply(message: types.Message):
     try:
-        # 🔹 Проверяем, что это команда мута (начинается с "мут" или "/мут")
+        # 🔹 Проверяем, что это команда мута
         text = message.text.strip().lower()
         if not (text.startswith("мут ") or text.startswith("/мут ") or text == "мут"):
-            return  # ❌ Не мут-команда — игнорируем
+            return
 
         # 🔹 Проверяем права отправителя
         moderator_id = message.from_user.id
         if not is_moderator(moderator_id):
-            return  # ❌ Не модератор — игнорируем
+            return
 
         # 🔹 Получаем пользователя, которому ответили
         replied_user = message.reply_to_message.from_user
         violator_id = replied_user.id
         violator_username = f"@{replied_user.username}" if replied_user.username else replied_user.full_name
 
-        # 🔹 Парсим причину и время: мут <причина> <время>
-        # Примеры: "мут спам 10m", "мут оскорбления 1h", "мут 30m"
+        # 🔹 Парсим причину и время
         command_parts = message.text.strip().split(maxsplit=2)
-
         if len(command_parts) < 2:
             await message.answer("❌ Формат: `мут <причина> <время>`\nПример: `мут спам 10m`", parse_mode="Markdown")
             return
 
-        # Определяем, где причина, а где время
         reason = ""
         duration = ""
 
         if len(command_parts) == 2:
-            # Вариант: "мут 10m" (без причины) или "мут спам" (без времени)
             second_part = command_parts[1]
-            if re.match(r'^\d+[smhd]$', second_part.lower()):  # 10m, 1h, 2d
+            if re.match(r'^\d+[smhd]$', second_part.lower()):
                 duration = second_part
                 reason = "Нарушение правил"
             else:
                 reason = second_part
-                duration = "10m"  # дефолт 10 минут
+                duration = "10m"
         else:
-            # Вариант: "мут спам 10m"
             reason = command_parts[1]
             duration = command_parts[2] if re.match(r'^\d+[smhd]$', command_parts[2].lower()) else "10m"
 
-        # 🔹 Нормализуем длительность в человекочитаемый формат
+        # 🔹 Конвертируем длительность в секунды для Telegram API
+        mute_seconds = parse_duration_to_seconds(duration)
         duration_readable = parse_duration(duration)
 
-        # 🔹 Логируем в таблицу
+        # 🔹 Логируем в таблицу (до применения мута)
         moderator_nick = find_member_by_tg_id(moderator_id) or message.from_user.full_name
         violator_nick = find_member_by_tg_id(violator_id) or violator_username
 
+        # 🔹 ПРИМЕНЯЕМ МУТ ЧЕРЕЗ TELEGRAM API ⚡
+        try:
+            await bot.restrict_chat_member(
+                chat_id=message.chat.id,
+                user_id=violator_id,
+                permissions=types.ChatPermissions(
+                    can_send_messages=False,
+                    can_send_media_messages=False,
+                    can_send_polls=False,
+                    can_send_other_messages=False,
+                    can_add_web_page_previews=False,
+                    can_change_info=False,
+                    can_invite_users=False,
+                    can_pin_messages=False
+                ),
+                until_date=datetime.now(pytz.timezone("Europe/Moscow")) + timedelta(
+                    seconds=mute_seconds) if mute_seconds > 0 else None
+            )
+            logging.info(f"✅ Мут применён: {violator_id} на {mute_seconds} сек в чате {message.chat.id}")
+        except Exception as api_error:
+            logging.error(f"❌ Ошибка Telegram API при муте: {api_error}")
+            # Если бот не админ или нет прав — сообщаем об этом
+            if "not enough rights" in str(api_error).lower() or "bot is not an administrator" in str(api_error).lower():
+                await message.answer(
+                    "❌ Ошибка: бот не имеет прав на мут!\nДобавьте бота в админы с правом «Ограничивать участников»")
+                return
+            elif "user is an administrator" in str(api_error).lower():
+                await message.answer("❌ Нельзя мутить администратора чата")
+                return
+
+        # 🔹 Логируем в таблицу
         if not append_mute_log(violator_nick, violator_id, moderator_nick, moderator_id, reason, duration_readable):
-            await message.answer("❌ Ошибка логирования мута")
-            return
+            logging.warning("⚠️ Не удалось записать мут в таблицу")
 
         # 🔹 Отправляем отчёт в чат
         report_text = (
@@ -1016,13 +1050,12 @@ async def mute_via_reply(message: types.Message):
             f"⏱ Длительность: <code>{duration_readable}</code>\n"
             f"📝 Причина: <code>{html_lib.escape(reason)}</code>"
         )
-
         await message.answer(report_text, parse_mode="HTML")
 
         # 🔹 Логируем действие
         append_log("МУТ", moderator_nick, moderator_id, violator_nick)
 
-        # 🔹 (Опционально) Уведомляем нарушителя в ЛС
+        # 🔹 Уведомляем нарушителя в ЛС
         try:
             await bot.send_message(
                 violator_id,
@@ -1036,19 +1069,34 @@ async def mute_via_reply(message: types.Message):
             pass  # Пользователь мог заблокировать бота
 
     except Exception as e:
-        logging.error(f"❌ mute_via_reply: {e}")
-        await message.answer("❌ Ошибка при выдаче мута")
+        logging.error(f"❌ mute_via_reply: {e}", exc_info=True)
+        await message.answer(f"❌ Ошибка при выдаче мута: {e}")
 
 
 # =========================
-# 🔤 ВСПОМОГАТЕЛЬНАЯ: Парсинг длительности
+# 🔤 ВСПОМОГАТЕЛЬНАЯ: Парсинг длительности в секунды
+# =========================
+def parse_duration_to_seconds(duration: str) -> int:
+    """Конвертирует 10m/1h/2d в секунды для Telegram API"""
+    import re
+    match = re.match(r'^(\d+)([smhd])$', duration.lower())
+    if not match:
+        return 600  # дефолт 10 минут
+
+    value, unit = int(match.group(1)), match.group(2)
+    multipliers = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400}
+    return value * multipliers.get(unit, 60)
+
+
+# =========================
+# 🔤 ВСПОМОГАТЕЛЬНАЯ: Парсинг длительности (для отображения)
 # =========================
 def parse_duration(duration: str) -> str:
     """Конвертирует 10m/1h/2d в человекочитаемый формат"""
     import re
     match = re.match(r'^(\d+)([smhd])$', duration.lower())
     if not match:
-        return "10 минут"  # дефолт
+        return "10 минут"
 
     value, unit = int(match.group(1)), match.group(2)
     units = {
