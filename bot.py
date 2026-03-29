@@ -3122,7 +3122,6 @@ async def check_new_devlogs():
 # 🔹 Запуск scheduler'а при старте бота
 async def on_startup(_):
     logger.info("✅ Бот запущен")
-    scheduler.add_job(process_scheduled_notifications,CronTrigger(minute="*/2", timezone=pytz.timezone("Europe/Moscow")))
     scheduler.start()
 
 
