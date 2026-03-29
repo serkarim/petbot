@@ -224,6 +224,48 @@ def append_log(action, username, user_id, to_member):
 def get_logs():
     return sheet.worksheet("логи").get_all_values()
 
+
+# =========================
+# 🔇 ЛОГИРОВАНИЕ МУТОВ
+# =========================
+def append_mute_log(violator_nick: str, violator_id: int, moderator_nick: str, moderator_id: int, reason: str,
+                    duration: str):
+    """Добавляет запись о муте в лист 'муты'"""
+    try:
+        # Пытаемся получить лист, если нет — создаём
+        try:
+            ws = sheet.worksheet("муты")
+        except gspread.exceptions.WorksheetNotFound:
+            ws = sheet.add_worksheet("муты", rows=100, cols=8)
+            ws.append_row(
+                ["Дата", "Нарушитель", "ID нарушителя", "Модератор", "ID модератора", "Причина", "Длительность",
+                 "Статус"])
+
+        date = get_msk_time().strftime("%d.%m.%Y %H:%M")
+        ws.append_row(
+            [date, violator_nick, str(violator_id), moderator_nick, str(moderator_id), reason, duration, "активен"])
+        return True
+    except Exception as e:
+        logging.error(f"❌ append_mute_log: {e}")
+        return False
+
+
+def is_moderator(user_id: int) -> bool:
+    """Проверяет, является ли пользователь модератором/админом"""
+    # Проверяем по списку ADMINS из .env
+    if user_id in ADMINS:
+        return True
+    # Проверяем по таблице "участники клана" (роль модератор)
+    try:
+        ws = sheet.worksheet("участники клана")
+        rows = ws.get_all_values()
+        for row in rows[1:]:
+            if len(row) >= 9 and row[8].strip() == str(user_id):
+                role = row[2].lower() if len(row) > 2 else ""
+                return role in ["модератор", "админ", "главный", "tech_admin"]
+    except Exception as e:
+        logging.error(f"❌ is_moderator check: {e}")
+    return False
 # ---------- ВРЕМЯ (MSK) ----------
 def get_msk_time():
     """Получает текущее время по Москве"""
@@ -905,6 +947,122 @@ async def reject_clip(callback: types.CallbackQuery):
     except Exception as e:
         logging.error(f"❌ reject_clip: {e}")
         await callback.answer("❌ Ошибка", show_alert=True)
+
+
+# =========================
+# 🔇 МУТ ЧЕРЕЗ ОТВЕТ НА СООБЩЕНИЕ
+# =========================
+@dp.message_handler(lambda msg: msg.reply_to_message is not None and msg.text, content_types=types.ContentTypes.TEXT)
+async def mute_via_reply(message: types.Message):
+    try:
+        # 🔹 Проверяем, что это команда мута (начинается с "мут" или "/мут")
+        text = message.text.strip().lower()
+        if not (text.startswith("мут ") or text.startswith("/мут ") or text == "мут"):
+            return  # ❌ Не мут-команда — игнорируем
+
+        # 🔹 Проверяем права отправителя
+        moderator_id = message.from_user.id
+        if not is_moderator(moderator_id):
+            return  # ❌ Не модератор — игнорируем
+
+        # 🔹 Получаем пользователя, которому ответили
+        replied_user = message.reply_to_message.from_user
+        violator_id = replied_user.id
+        violator_username = f"@{replied_user.username}" if replied_user.username else replied_user.full_name
+
+        # 🔹 Парсим причину и время: мут <причина> <время>
+        # Примеры: "мут спам 10m", "мут оскорбления 1h", "мут 30m"
+        command_parts = message.text.strip().split(maxsplit=2)
+
+        if len(command_parts) < 2:
+            await message.answer("❌ Формат: `мут <причина> <время>`\nПример: `мут спам 10m`", parse_mode="Markdown")
+            return
+
+        # Определяем, где причина, а где время
+        reason = ""
+        duration = ""
+
+        if len(command_parts) == 2:
+            # Вариант: "мут 10m" (без причины) или "мут спам" (без времени)
+            second_part = command_parts[1]
+            if re.match(r'^\d+[smhd]$', second_part.lower()):  # 10m, 1h, 2d
+                duration = second_part
+                reason = "Нарушение правил"
+            else:
+                reason = second_part
+                duration = "10m"  # дефолт 10 минут
+        else:
+            # Вариант: "мут спам 10m"
+            reason = command_parts[1]
+            duration = command_parts[2] if re.match(r'^\d+[smhd]$', command_parts[2].lower()) else "10m"
+
+        # 🔹 Нормализуем длительность в человекочитаемый формат
+        duration_readable = parse_duration(duration)
+
+        # 🔹 Логируем в таблицу
+        moderator_nick = find_member_by_tg_id(moderator_id) or message.from_user.full_name
+        violator_nick = find_member_by_tg_id(violator_id) or violator_username
+
+        if not append_mute_log(violator_nick, violator_id, moderator_nick, moderator_id, reason, duration_readable):
+            await message.answer("❌ Ошибка логирования мута")
+            return
+
+        # 🔹 Отправляем отчёт в чат
+        report_text = (
+            f"🔇 <b>Мут выдан</b>\n\n"
+            f"👤 Нарушитель: <code>{html_lib.escape(violator_username)}</code>\n"
+            f"🛡 Модератор: <code>{html_lib.escape(moderator_nick)}</code>\n"
+            f"⏱ Длительность: <code>{duration_readable}</code>\n"
+            f"📝 Причина: <code>{html_lib.escape(reason)}</code>"
+        )
+
+        await message.answer(report_text, parse_mode="HTML")
+
+        # 🔹 Логируем действие
+        append_log("МУТ", moderator_nick, moderator_id, violator_nick)
+
+        # 🔹 (Опционально) Уведомляем нарушителя в ЛС
+        try:
+            await bot.send_message(
+                violator_id,
+                f"🔇 Вам выдан мут в чате клана PET\n"
+                f"🕒 Длительность: {duration_readable}\n"
+                f"📝 Причина: {reason}\n"
+                f"🛡 Модератор: {moderator_nick}",
+                parse_mode="HTML"
+            )
+        except:
+            pass  # Пользователь мог заблокировать бота
+
+    except Exception as e:
+        logging.error(f"❌ mute_via_reply: {e}")
+        await message.answer("❌ Ошибка при выдаче мута")
+
+
+# =========================
+# 🔤 ВСПОМОГАТЕЛЬНАЯ: Парсинг длительности
+# =========================
+def parse_duration(duration: str) -> str:
+    """Конвертирует 10m/1h/2d в человекочитаемый формат"""
+    import re
+    match = re.match(r'^(\d+)([smhd])$', duration.lower())
+    if not match:
+        return "10 минут"  # дефолт
+
+    value, unit = int(match.group(1)), match.group(2)
+    units = {
+        's': ('секунд', 'секунду', 'секунды'),
+        'm': ('минут', 'минуту', 'минуты'),
+        'h': ('часов', 'час', 'часа'),
+        'd': ('дней', 'день', 'дня')
+    }
+
+    if value == 1:
+        return f"1 {units[unit][1]}"
+    elif 2 <= value <= 4:
+        return f"{value} {units[unit][2]}"
+    else:
+        return f"{value} {units[unit][0]}"
 # =========================
 # 📝 РЕГИСТРАЦИЯ
 # =========================
@@ -2720,80 +2878,80 @@ async def get_chat_id(message: types.Message):
 # 🔤 АВТО-ОТВЕТЫ НА СЛОВА
 # =========================
 
-# Слова для отслеживания
-JDM_TRIGGERS = ["jdm", "ждм", "JDM", "ЖДМ", "Jdm", "Ждм"]
-YATO_TRIGGERS = ["ЯТО","ято","Ято","Yatoo","YATOO"]
-PRO_TRIGGERS = ["ПРОТОКОЛ","протокол","PROTOCOL","protocol","Протокол"]
-# Ответ бота (можно менять)
-JDM_RESPONSE = """
-<b>JDM лохи!!! слава петушкам!!!</b> 
-"""
-YATO_RESPONSE = """
-<b>ЯТО ХУЕСОС, ПОЗОР ЕМУ!!!</b> 
-"""
-PRO_RESPONSE = """ <b> Нахуй этот пивной гнилой сервак . Идите на мжд!!! </b> """
-@dp.message_handler()
-async def auto_response_jdm(message: types.Message):
-    """Отвечает на слова jdm/ждм в чате"""
-    try:
-        # Не отвечаем ботам и в личных сообщениях
-        if message.from_user.is_bot:
-            return
-
-        # Проверяем, что это группа (не ЛС)
-        if message.chat.type == "private":
-            return
-
-        # Получаем текст сообщения
-        text = message.text
-        if not text:
-            return
-
-        # Проверяем наличие триггеров (без учёта регистра)
-        text_lower = text.lower()
-        if any(trigger.lower() in text_lower for trigger in JDM_TRIGGERS):
-            # Отвечаем с задержкой 1 секунда (чтобы выглядело естественнее)
-            await asyncio.sleep(1)
-            await message.answer(JDM_RESPONSE, parse_mode="HTML")
-            logging.info(f"🏎️ JDM-ответ отправлен в чате {message.chat.id}")
-        if any(trigger.lower() in text_lower for trigger in YATO_TRIGGERS):
-            # Отвечаем с задержкой 1 секунда (чтобы выглядело естественнее)
-            await asyncio.sleep(1)
-            await message.answer(YATO_RESPONSE, parse_mode="HTML")
-            logging.info(f"🏎️ YATO-ответ отправлен в чате {message.chat.id}")
-        if any(trigger.lower() in text_lower for trigger in PRO_TRIGGERS):
-            # Отвечаем с задержкой 1 секунда (чтобы выглядело естественнее)
-            await asyncio.sleep(1)
-            await message.answer(PRO_RESPONSE, parse_mode="HTML")
-            logging.info(f"🏎️ PRO-ответ отправлен в чате {message.chat.id}")
-    except Exception as e:
-        logging.error(f"❌ auto_response_jdm: {e}")
-
-
-# =========================
-# 🎛 АДМИН-КОМАНДЫ ДЛЯ JDM
-# =========================
-
-@dp.message_handler(commands=["set_jdm_response"])
-async def set_jdm_response(message: types.Message):
-    """Админ меняет текст ответа на jdm"""
-    if message.from_user.id not in ADMINS:
-        await message.answer("❌ Только для админов")
-        return
-
-    new_text = message.text.replace("/set_jdm_response", "").strip()
-    if not new_text:
-        await message.answer(
-            "❌ Введите текст после команды\n\n"
-            "Пример:\n"
-            "/set_jdm_response 🏎️ JDM FOREVER!"
-        )
-        return
-
-    global JDM_RESPONSE
-    JDM_RESPONSE = new_text
-    await message.answer("✅ Текст ответа на JDM обновлён!")
-    logging.info(f"📝 JDM-ответ изменён админом {message.from_user.full_name}")
+# # Слова для отслеживания
+# JDM_TRIGGERS = ["jdm", "ждм", "JDM", "ЖДМ", "Jdm", "Ждм"]
+# YATO_TRIGGERS = ["ЯТО","ято","Ято","Yatoo","YATOO"]
+# PRO_TRIGGERS = ["ПРОТОКОЛ","протокол","PROTOCOL","protocol","Протокол"]
+# # Ответ бота (можно менять)
+# JDM_RESPONSE = """
+# <b>JDM лохи!!! слава петушкам!!!</b>
+# """
+# YATO_RESPONSE = """
+# <b>ЯТО ХУЕСОС, ПОЗОР ЕМУ!!!</b>
+# """
+# PRO_RESPONSE = """ <b> Нахуй этот пивной гнилой сервак . Идите на мжд!!! </b> """
+# @dp.message_handler()
+# async def auto_response_jdm(message: types.Message):
+#     """Отвечает на слова jdm/ждм в чате"""
+#     try:
+#         # Не отвечаем ботам и в личных сообщениях
+#         if message.from_user.is_bot:
+#             return
+#
+#         # Проверяем, что это группа (не ЛС)
+#         if message.chat.type == "private":
+#             return
+#
+#         # Получаем текст сообщения
+#         text = message.text
+#         if not text:
+#             return
+#
+#         # Проверяем наличие триггеров (без учёта регистра)
+#         text_lower = text.lower()
+#         if any(trigger.lower() in text_lower for trigger in JDM_TRIGGERS):
+#             # Отвечаем с задержкой 1 секунда (чтобы выглядело естественнее)
+#             await asyncio.sleep(1)
+#             await message.answer(JDM_RESPONSE, parse_mode="HTML")
+#             logging.info(f"🏎️ JDM-ответ отправлен в чате {message.chat.id}")
+#         if any(trigger.lower() in text_lower for trigger in YATO_TRIGGERS):
+#             # Отвечаем с задержкой 1 секунда (чтобы выглядело естественнее)
+#             await asyncio.sleep(1)
+#             await message.answer(YATO_RESPONSE, parse_mode="HTML")
+#             logging.info(f"🏎️ YATO-ответ отправлен в чате {message.chat.id}")
+#         if any(trigger.lower() in text_lower for trigger in PRO_TRIGGERS):
+#             # Отвечаем с задержкой 1 секунда (чтобы выглядело естественнее)
+#             await asyncio.sleep(1)
+#             await message.answer(PRO_RESPONSE, parse_mode="HTML")
+#             logging.info(f"🏎️ PRO-ответ отправлен в чате {message.chat.id}")
+#     except Exception as e:
+#         logging.error(f"❌ auto_response_jdm: {e}")
+#
+#
+# # =========================
+# # 🎛 АДМИН-КОМАНДЫ ДЛЯ JDM
+# # =========================
+#
+# @dp.message_handler(commands=["set_jdm_response"])
+# async def set_jdm_response(message: types.Message):
+#     """Админ меняет текст ответа на jdm"""
+#     if message.from_user.id not in ADMINS:
+#         await message.answer("❌ Только для админов")
+#         return
+#
+#     new_text = message.text.replace("/set_jdm_response", "").strip()
+#     if not new_text:
+#         await message.answer(
+#             "❌ Введите текст после команды\n\n"
+#             "Пример:\n"
+#             "/set_jdm_response 🏎️ JDM FOREVER!"
+#         )
+#         return
+#
+#     global JDM_RESPONSE
+#     JDM_RESPONSE = new_text
+#     await message.answer("✅ Текст ответа на JDM обновлён!")
+#     logging.info(f"📝 JDM-ответ изменён админом {message.from_user.full_name}")
 
 
 @dp.message_handler(commands=["test_jdm"])
@@ -2838,64 +2996,64 @@ async def on_shutdown(_):
 # =========================
 # 🔄 SCHEDULER: Оповещения
 # =========================
-async def process_scheduled_notifications():
-    """Проверка и отправка запланированных оповещений"""
-    try:
-        ws = sheet.worksheet("запланированные_оповещения")
-        rows = ws.get_all_values()[1:]
-        now = get_msk_time()
-
-        for idx, row in enumerate(rows, start=2):
-            if len(row) < 7:
-                continue
-            status, schedule_time = row[6], row[4]
-            if status != "ожидает" or schedule_time == "now":
-                continue
-            try:
-                scheduled = datetime.strptime(schedule_time, "%d.%m.%Y %H:%M")
-                scheduled = pytz.timezone("Europe/Moscow").localize(scheduled)
-            except:
-                continue
-            if scheduled <= now:
-                audience, text, photo_url = row[2], row[3], row[7] if len(row) > 7 else None
-                recipients = []
-
-                # 🔹 Получатели
-                if audience == "all":
-                    members_ws = sheet.worksheet("участники клана")
-                    for r in members_ws.get_all_values()[1:]:
-                        if len(r) > 8 and r[8].strip().isdigit():
-                            recipients.append(int(r[8]))
-                elif audience == "admins":
-                    recipients = ADMINS
-                elif audience == "role:":
-                    role = audience.split(":")[1] if ":" in audience else ""
-                    if role:
-                        roles_ws = sheet.worksheet("разряды")
-                        for r in roles_ws.get_all_values()[1:]:
-                            if len(r) > 1 and r[1].lower() == role.lower():
-                                nick = r[0]
-                                main_ws = sheet.worksheet("участники клана")
-                                for mr in main_ws.get_all_values()[1:]:
-                                    if mr[0] == nick and len(mr) > 8 and mr[8].strip().isdigit():
-                                        recipients.append(int(mr[8]))
-
-                # 🔹 Отправка
-                for uid in recipients:
-                    try:
-                        if photo_url:
-                            await bot.send_photo(uid, photo=photo_url, caption=f"📢 {text}", parse_mode="HTML")
-                        else:
-                            await bot.send_message(uid, text=f"📢 {text}", parse_mode="HTML")
-                        await asyncio.sleep(0.05)
-                    except Exception as e:
-                        logger.error(f"❌ Не отправлено {uid}: {e}")
-
-                # ✅ Обновляем статус
-                ws.update_cell(idx, 7, "отправлено")
-                logger.info(f"✅ Оповещение #{idx - 1} отправлено")
-    except Exception as e:
-        logger.error(f"❌ Scheduler error: {e}")
+# async def process_scheduled_notifications():
+#     """Проверка и отправка запланированных оповещений"""
+#     try:
+#         ws = sheet.worksheet("запланированные_оповещения")
+#         rows = ws.get_all_values()[1:]
+#         now = get_msk_time()
+#
+#         for idx, row in enumerate(rows, start=2):
+#             if len(row) < 7:
+#                 continue
+#             status, schedule_time = row[6], row[4]
+#             if status != "ожидает" or schedule_time == "now":
+#                 continue
+#             try:
+#                 scheduled = datetime.strptime(schedule_time, "%d.%m.%Y %H:%M")
+#                 scheduled = pytz.timezone("Europe/Moscow").localize(scheduled)
+#             except:
+#                 continue
+#             if scheduled <= now:
+#                 audience, text, photo_url = row[2], row[3], row[7] if len(row) > 7 else None
+#                 recipients = []
+#
+#                 # 🔹 Получатели
+#                 if audience == "all":
+#                     members_ws = sheet.worksheet("участники клана")
+#                     for r in members_ws.get_all_values()[1:]:
+#                         if len(r) > 8 and r[8].strip().isdigit():
+#                             recipients.append(int(r[8]))
+#                 elif audience == "admins":
+#                     recipients = ADMINS
+#                 elif audience == "role:":
+#                     role = audience.split(":")[1] if ":" in audience else ""
+#                     if role:
+#                         roles_ws = sheet.worksheet("разряды")
+#                         for r in roles_ws.get_all_values()[1:]:
+#                             if len(r) > 1 and r[1].lower() == role.lower():
+#                                 nick = r[0]
+#                                 main_ws = sheet.worksheet("участники клана")
+#                                 for mr in main_ws.get_all_values()[1:]:
+#                                     if mr[0] == nick and len(mr) > 8 and mr[8].strip().isdigit():
+#                                         recipients.append(int(mr[8]))
+#
+#                 # 🔹 Отправка
+#                 for uid in recipients:
+#                     try:
+#                         if photo_url:
+#                             await bot.send_photo(uid, photo=photo_url, caption=f"📢 {text}", parse_mode="HTML")
+#                         else:
+#                             await bot.send_message(uid, text=f"📢 {text}", parse_mode="HTML")
+#                         await asyncio.sleep(0.05)
+#                     except Exception as e:
+#                         logger.error(f"❌ Не отправлено {uid}: {e}")
+#
+#                 # ✅ Обновляем статус
+#                 ws.update_cell(idx, 7, "отправлено")
+#                 logger.info(f"✅ Оповещение #{idx - 1} отправлено")
+#     except Exception as e:
+#         logger.error(f"❌ Scheduler error: {e}")
 
 
 async def check_new_devlogs():
