@@ -920,7 +920,23 @@ document.addEventListener('click', (e) => {
         closeMemberRecordsModal();
     }
 });
+console.log('🔍 Checking for isAdmin duplicates...');
+let isAdminDeclarations = 0;
+const stack = new Error().stack;
 
+// Проверка типа переменной
+if (typeof isAdmin !== 'undefined') {
+    console.log('✅ isAdmin variable exists (type:', typeof isAdmin, ')');
+}
+
+// Проверка функции
+if (typeof checkIsAdminByList === 'function') {
+    console.log('✅ checkIsAdminByList function exists');
+} else {
+    console.error('❌ checkIsAdminByList function NOT FOUND!');
+}
+
+console.log('🚀 App initialization complete');
 // =========================
 // 🚀 ЗАПУСК
 // =========================
