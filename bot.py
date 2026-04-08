@@ -1500,35 +1500,43 @@ from datetime import datetime
 from krestgg_parser import parser as krest_parser
 
 
-@dp.message_handler(commands=['pet_online', 'пет_онлайн'])
+@dp.message_handler(commands=['pet_online', 'пет_онлайн', 'клан_онлайн'])
 async def cmd_pet_online(message: types.Message):
-    status = await message.answer("🔍 Сканирую сервера...")
+    """Показывает онлайн [PET] с разделением по серверам"""
+    status = await message.answer("🔍 Сканирую сервера Крестов...")
 
     try:
-        online = await krest_parser.get_pet_online()
+        data = await krest_parser.get_pet_online_by_server()
 
-        if online:
-            text = f"🟢 <b>[PET] онлайн</b> ({len(online)}):\n\n"
-            for i, nick in enumerate(online, 1):
-                clean = re.sub(r'\[PETs?\]\s*', '', nick, flags=re.I).strip()
-                text += f"{i}. <code>{clean}</code>\n"
-            await status.edit_text(text, parse_mode="HTML")
-        else:
-            await status.edit_text("🔴 [PET] не найдены в сети")
+        if not data:
+            await status.edit_text("🔴 Сейчас нет игроков [PET] в сети или сайт не ответил.")
+            return
+
+        # Формируем ответ
+        lines = ["🟢 <b>Клан [PET] по серверам:</b>\n"]
+        total = 0
+
+        for server, players in data.items():
+            # Чистим название сервера для вывода
+            srv_clean = re.sub(r'\[RU\]\s*', '', server, flags=re.I).strip()
+            count = len(players)
+            total += count
+            lines.append(f"🎮 <b>{srv_clean}</b> ({count}):")
+
+            # Группируем по 5 ников в строку
+            for i in range(0, count, 5):
+                chunk = players[i:i + 5]
+                # Убираем дублирующий тег из ника для красоты
+                clean_nicks = [re.sub(r'\[PETs?\]\s*', '', p, flags=re.I).strip() for p in chunk]
+                lines.append("  • " + "  • ".join(f"<code>{n}</code>" for n in clean_nicks))
+            lines.append("")  # Пустая строка между серверами
+
+        lines.append(f"📊 <i>Всего онлайн: {total} | Обновлено: {datetime.now().strftime('%H:%M:%S')}</i>")
+        await status.edit_text("\n".join(lines), parse_mode="HTML")
+
     except Exception as e:
-        await status.edit_text(f"⚠️ Ошибка: {e}")
-
-# === Опционально: команда /refresh_pet — форс-обновление кэша ===
-@dp.message_handler(commands=['refresh_pet', 'обновить_пет'])
-async def cmd_refresh_pet(message: types.Message):
-    """Принудительное обновление списка (обходит кэш)"""
-    if message.from_user.id not in ADMINS:  # Если у тебя есть список админов
-        await message.answer("🔒 Эта команда только для админов.")
-        return
-
-    status = await message.answer("🔄 Обновляю данные с серверов...")
-    online = await krest_parser.get_pet_online(force_refresh=True)
-    await status.edit_text(f"✅ Обновлено! Сейчас [PET] онлайн: {len(online)}")
+        logger.error(f"Ошибка /pet_online: {e}")
+        await status.edit_text("⚠️ Произошла ошибка при опросе серверов.")
 # =========================
 # 📬 АДМИН-ПАНЕЛЬ ЗАЯВОК
 # =========================

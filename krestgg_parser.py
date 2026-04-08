@@ -1,40 +1,32 @@
 # krestgg_parser.py
-import asyncio
-import logging
 import re
 import time
-from typing import List, Set
-from playwright.async_api import async_playwright
+import logging
+from typing import Dict, List
+from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
 
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://krestgg.ru"
-CLAN_TAG = "PET"
-
 BROWSER_ARGS = [
-    "--no-sandbox",
-    "--disable-setuid-s",
-    "--disable-dev-shm-usage",
-    "--disable-gpu",
-    "--single-process",
-    "--disable-extensions",
-    "--no-zygote",
+    "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
+    "--disable-gpu", "--single-process", "--disable-extensions", "--no-zygote"
 ]
 
 
 class KrestGGParser:
-    def __init__(self, clan_tag: str = CLAN_TAG, timeout: int = 15000):
-        self.clan_tag = clan_tag.upper()
+    def __init__(self, timeout: int = 15000):
         self.timeout = timeout
-        self._cache = {"data": [], "timestamp": 0, "ttl": 120}
+        self._cache = {"data": {}, "timestamp": 0, "ttl": 120}  # {server_name: [players]}
 
-    async def get_pet_online(self, force_refresh: bool = False) -> List[str]:
+    async def get_pet_online_by_server(self, force_refresh: bool = False) -> Dict[str, List[str]]:
+        """Возвращает словарь {название_сервера: [список_игроков_PET]}"""
         now = time.time()
         if not force_refresh and self._cache["data"] and (now - self._cache["timestamp"]) < self._cache["ttl"]:
             return self._cache["data"]
 
-        logger.info(f"🔍 Сканирую krestgg.ru на наличие [{self.clan_tag}]...")
-        all_online: Set[str] = set()
+        logger.info("🔍 Сканирую вкладки серверов Крестов...")
+        result = {}
 
         async with async_playwright() as p:
             try:
@@ -45,81 +37,95 @@ class KrestGGParser:
                 )
                 page = await context.new_page()
                 await page.goto(BASE_URL, wait_until="domcontentloaded", timeout=self.timeout)
-                await page.wait_for_timeout(1500)  # Ждём инициализацию SPA
+                await page.wait_for_timeout(1500)  # Ждём инициализацию React/Vue
 
-                # Ищем вкладки серверов по тексту [RU]
-                server_tabs = await page.locator("*").filter(has_text=re.compile(r"\[RU\]")).all()
+                # 1️⃣ Ищем вкладки серверов по паттерну [RU][XXX]
+                server_tabs = await page.locator("*").filter(has_text=re.compile(r"\[RU\]\[[A-Z]+\]?")).all()
                 if not server_tabs:
-                    logger.warning("⚠️ Не найдены вкладки серверов")
-                    await browser.close()
-                    return []
+                    logger.warning("⚠️ Вкладки серверов не найдены!")
+                    return {}
 
                 logger.info(f"🎮 Найдено {len(server_tabs)} серверов")
 
-                for i, tab in enumerate(server_tabs, 1):
+                for tab in server_tabs:
                     try:
-                        tab_text = await tab.inner_text()
-                        # Пропускаем дубли и не-серверные элементы
-                        if "Кресты" not in tab_text:
-                            continue
+                        raw_name = await tab.inner_text()
+                        # Чистим название от онлайна: "100/100(+14)"
+                        clean_name = re.sub(r'\s*\d+/\d+\(?\+?\d*\)?', '', raw_name).strip()
 
-                        logger.debug(f"[{i}/{len(server_tabs)}] Переключаю: {tab_text.strip()}")
+                        logger.debug(f"🔄 Переключаю на: {clean_name}")
                         await tab.click()
 
-                        # Ждём обновления списка игроков (лоадер или просто сеть)
+                        # Ждём подгрузки списка игроков
                         await page.wait_for_load_state("networkidle", timeout=5000)
                         await page.wait_for_timeout(400)
 
-                        nicks = await self._extract_pet_nicks(page)
-                        if nicks:
-                            logger.debug(f"✅ {tab_text.strip()}: +{len(nicks)} игроков")
-                            all_online.update(nicks)
+                        # 2️⃣ Парсим только текущую вкладку
+                        players = await self._extract_pet_players(page)
+                        if players:
+                            result[clean_name] = players
+                            logger.debug(f"✅ {clean_name}: {len(players)} игроков")
 
+                        await page.wait_for_timeout(200)  # Пауза между вкладками
                     except Exception as e:
-                        logger.debug(f"⚠️ Ошибка на вкладке #{i}: {e}")
+                        logger.debug(f"⚠️ Ошибка вкладки {raw_name}: {e}")
                         continue
 
                 await browser.close()
-                result = sorted(list(all_online))
                 self._cache["data"] = result
                 self._cache["timestamp"] = time.time()
-                logger.info(f"✨ Всего [{self.clan_tag}] онлайн: {len(result)}")
                 return result
 
             except Exception as e:
-                logger.error(f"❌ Ошибка парсинга: {type(e).__name__}: {e}")
-                return []
+                logger.error(f"❌ Ошибка парсинга: {e}")
+                return {}
+            finally:
+                try:
+                    await browser.close()
+                except:
+                    pass
 
-    async def _extract_pet_nicks(self, page) -> List[str]:
-        """Ищет ники с [PET] или [PETs] через нативные локаторы Playwright"""
-        nicks = set()
-        # Регулярка для тега клана
-        tag_pattern = re.compile(r"\[PETs?\]", re.IGNORECASE)
+    async def _extract_pet_players(self, page) -> List[str]:
+        """Извлекает ники [PET]/[PETs] из списка отрядов, игнорируя шапку профиля"""
+        js_code = """
+        () => {
+            const results = new Set();
+            const tagRegex = /\\[PETs?\\]/i;
+            const nameRegex = /(\\[PETs?\\]\\s*[A-Za-z0-9А-Яа-я_\\-\\.!?]{2,20})/i;
 
-        # Ищем только видимые элементы, содержащие тег
-        elements = await page.locator("*").filter(has_text=tag_pattern).all()
+            // Ищем только в основном контенте, пропускаем header/nav/footer
+            const mainArea = document.querySelector('main') || 
+                             document.querySelector('section') || 
+                             document.body;
 
-        for el in elements:
-            try:
-                text = await el.inner_text()
-                if not text or len(text) > 100:  # Игнорируем огромные блоки
-                    continue
+            const walker = document.createTreeWalker(mainArea, NodeFilter.SHOW_TEXT, null, false);
+            let node;
+            while (node = walker.nextNode()) {
+                const text = node.textContent.trim();
+                if (!text || text.length > 60) continue;
 
-                # 1. Убираем кнопку "В друзья" (часто прилипает без пробела)
-                clean = re.sub(r"В\s*друзья", "", text, flags=re.IGNORECASE)
-                # 2. Схлопываем пробелы и переносы строк
-                clean = re.sub(r"\s+", " ", clean).strip()
-                # 3. Вытаскиваем ник: [PET] Name или [PETs] Name
-                match = re.search(r"(\[PETs?\]\s*[A-Za-z0-9А-Яа-я_\-\.\!\?]+)", clean, re.IGNORECASE)
+                if (tagRegex.test(text)) {
+                    const match = text.match(nameRegex);
+                    if (match) {
+                        let nick = match[1].trim();
+                        // Чистим прилипшую кнопку "В друзья"
+                        nick = nick.replace(/В\\s*друзья/gi, '').trim();
+                        if (nick.length >= 5 && nick.length <= 25 && !results.has(nick)) {
+                            results.add(nick);
+                        }
+                    }
+                }
+            }
+            return Array.from(results);
+        }
+        """
+        try:
+            nicks = await page.evaluate(js_code)
+            return [str(n).strip() for n in nicks if n]
+        except Exception as e:
+            logger.debug(f"⚠️ Ошибка JS-извлечения: {e}")
+            return []
 
-                if match:
-                    nick = match.group(1).strip()
-                    if 5 <= len(nick) <= 30:  # Фильтр адекватной длины
-                        nicks.add(nick)
-            except Exception:
-                continue
 
-        return list(nicks)
-
-
+# Глобальный экземпляр
 parser = KrestGGParser()
