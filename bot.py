@@ -17,6 +17,8 @@ from apscheduler.triggers.cron import CronTrigger
 from gdrive import upload_video_to_drive
 import pytz
 import time
+from datetime import datetime
+from krestgg_parser import parser as krest_parser  # импорт нашего парсера
 from aiogram.types import WebAppInfo  # ← Добавить в импорты
 import asyncio
 # =========================
@@ -1491,6 +1493,42 @@ async def app_status(callback: types.CallbackQuery):
         logging.error(f"❌ app_status: {e}")
         await callback.answer("❌ Ошибка", show_alert=True)
 
+
+# === В начало bot.py, после других импортов ===
+import re
+from datetime import datetime
+from krestgg_parser import parser as krest_parser
+
+
+@dp.message_handler(commands=['pet_online', 'пет_онлайн'])
+async def cmd_pet_online(message: types.Message):
+    status = await message.answer("🔍 Сканирую сервера...")
+
+    try:
+        online = await krest_parser.get_pet_online()
+
+        if online:
+            text = f"🟢 <b>[PET] онлайн</b> ({len(online)}):\n\n"
+            for i, nick in enumerate(online, 1):
+                clean = re.sub(r'\[PETs?\]\s*', '', nick, flags=re.I).strip()
+                text += f"{i}. <code>{clean}</code>\n"
+            await status.edit_text(text, parse_mode="HTML")
+        else:
+            await status.edit_text("🔴 [PET] не найдены в сети")
+    except Exception as e:
+        await status.edit_text(f"⚠️ Ошибка: {e}")
+
+# === Опционально: команда /refresh_pet — форс-обновление кэша ===
+@dp.message_handler(commands=['refresh_pet', 'обновить_пет'])
+async def cmd_refresh_pet(message: types.Message):
+    """Принудительное обновление списка (обходит кэш)"""
+    if message.from_user.id not in ADMINS:  # Если у тебя есть список админов
+        await message.answer("🔒 Эта команда только для админов.")
+        return
+
+    status = await message.answer("🔄 Обновляю данные с серверов...")
+    online = await krest_parser.get_pet_online(force_refresh=True)
+    await status.edit_text(f"✅ Обновлено! Сейчас [PET] онлайн: {len(online)}")
 # =========================
 # 📬 АДМИН-ПАНЕЛЬ ЗАЯВОК
 # =========================
