@@ -4,30 +4,12 @@ import logging
 import time
 import re
 from typing import List, Set
-from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
+from playwright.async_api import async_playwright
 
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://krestgg.ru"
 CLAN_TAG = "PET"
-
-# 🎯 ТОЧНЫЕ СЕЛЕКТОРЫ на основе твоего HTML
-SELECTORS = {
-    # Кнопки серверов (те что в шапке с онлайном)
-    "server_buttons": "button.server-button, .server-card button, [data-server], .servers-list button",
-
-    # Контейнер со списком игроков
-    "players_container": ".players-list, .squad-list, .server-players, #players-container",
-
-    # Отряды (squads)
-    "squad_sections": ".squad, .squad-section, [class*='squad']",
-
-    # Строка игрока (может быть div, span или просто текст после img)
-    "player_row": ".player, .player-item, .squad-member",
-
-    # Ник игрока - ИЩЕМ ТЕКСТ ПОСЛЕ КАРТИНКИ
-    "nickname": "img + span, img + a, .player-name, .player-nick",
-}
 
 BROWSER_ARGS = [
     "--no-sandbox",
@@ -47,7 +29,6 @@ class KrestGGParser:
         self._cache = {"data": [], "timestamp": 0, "ttl": 120}
 
     async def get_pet_online(self, force_refresh: bool = False) -> List[str]:
-        """Сканирует все сервера и находит [PET]"""
         now = time.time()
 
         if not force_refresh and self._cache["data"] and (now - self._cache["timestamp"]) < self._cache["ttl"]:
@@ -67,10 +48,10 @@ class KrestGGParser:
                 page = await context.new_page()
 
                 await page.goto(BASE_URL, wait_until="domcontentloaded", timeout=self.timeout)
-                await page.wait_for_timeout(1500)
+                await page.wait_for_timeout(2000)
 
-                # Находим кнопки серверов
-                server_buttons = await page.query_selector_all(SELECTORS["server_buttons"])
+                # Ищем кнопки серверов по тексту "[RU]"
+                server_buttons = await page.query_selector_all("text=[RU]")
 
                 if not server_buttons:
                     logger.warning("⚠️ Не найдены кнопки серверов!")
@@ -79,6 +60,7 @@ class KrestGGParser:
 
                 logger.info(f"🎮 Найдено {len(server_buttons)} серверов")
 
+                # Кликаем на каждую кнопку сервера
                 for i, button in enumerate(server_buttons, 1):
                     try:
                         server_name = await page.evaluate('el => el.textContent.trim()', button)
@@ -87,7 +69,7 @@ class KrestGGParser:
                         await button.click()
                         await page.wait_for_timeout(1000)
 
-                        # Парсим всех игроков на странице
+                        # Парсим игроков с тегом [PET]
                         pet_players = await self._extract_pet_nicks(page)
 
                         if pet_players:
@@ -114,14 +96,15 @@ class KrestGGParser:
                 return []
 
     async def _extract_pet_nicks(self, page) -> List[str]:
-        """Извлекает ники с [PET] используя JS"""
+        """Извлекает ники с [PET] из DOM"""
         js_code = f"""
         () => {{
             const results = [];
             const tag = "{self.clan_tag}".toUpperCase();
             const tagPattern = `[${{tag}}]`;
+            const tagPatternS = `[${{tag}}S]`;
 
-            // Ищем ВСЕ текстовые узлы на странице
+            // Ищем все текстовые узлы
             const walker = document.createTreeWalker(
                 document.body,
                 NodeFilter.SHOW_TEXT,
@@ -134,48 +117,50 @@ class KrestGGParser:
                 textNodes.push(walker.currentNode);
             }}
 
-            // Ищем ники с тегом [PET]
             for (const node of textNodes) {{
                 const text = node.textContent.trim();
-                if (!text) continue;
+                if (!text || text.length < 5) continue;
 
-                // Разбиваем на слова/ники
-                const words = text.split(/\\s+/);
-                for (const word of words) {{
-                    const cleanWord = word.replace(/[^\\w\\[\\]]/g, '');
-                    if (cleanWord.toUpperCase().includes(tagPattern)) {{
-                        // Убираем "Вдрузья" и другой мусор
-                        const nick = cleanWord.replace(/Вдрузья/g, '').trim();
-                        if (nick && nick.length >= 3 && !results.includes(nick)) {{
-                            results.push(nick);
-                        }}
-                    }}
-                }}
+                // Проверяем на наличие тега [PET] или [PETs]
+                if (text.toUpperCase().includes(tagPattern) || 
+                    text.toUpperCase().includes(tagPatternS)) {{
 
-                // Также проверяем весь текст целиком
-                if (text.toUpperCase().includes(tagPattern)) {{
-                    const cleanText = text.replace(/Вдрузья/g, '').trim();
-                    const words2 = cleanText.split(/\\s+/);
-                    for (const w of words2) {{
-                        if (w.toUpperCase().includes(tagPattern) && !results.includes(w)) {{
-                            results.push(w);
+                    // Разбиваем на слова
+                    const words = text.split(/\\s+/);
+                    for (const word of words) {{
+                        const cleanWord = word.replace(/[^\\w\\[\\]]/g, '');
+                        if (cleanWord.toUpperCase().includes(tagPattern) || 
+                            cleanWord.toUpperCase().includes(tagPatternS)) {{
+                            if (cleanWord.length >= 5 && !results.includes(cleanWord)) {{
+                                results.push(cleanWord);
+                            }}
                         }}
                     }}
                 }}
             }}
 
-            // Дополнительно ищем по элементам после картинок
+            // Дополнительно ищем рядом с картинками
             const imgs = document.querySelectorAll('img');
             for (const img of imgs) {{
-                let next = img.nextElementSibling;
-                if (next) {{
-                    const text = next.textContent.trim();
-                    if (text.toUpperCase().includes(tagPattern)) {{
-                        const clean = text.replace(/Вдрузья/g, '').trim();
-                        if (clean && !results.includes(clean)) {{
-                            results.push(clean);
+                let next = img.nextSibling;
+                while (next) {{
+                    if (next.nodeType === Node.TEXT_NODE) {{
+                        const text = next.textContent.trim();
+                        if (text && text.length >= 5) {{
+                            if (text.toUpperCase().includes(tagPattern) || 
+                                text.toUpperCase().includes(tagPatternS)) {{
+                                const words = text.split(/\\s+/);
+                                for (const w of words) {{
+                                    const clean = w.replace(/[^\\w\\[\\]]/g, '');
+                                    if (clean.length >= 5 && !results.includes(clean)) {{
+                                        results.push(clean);
+                                    }}
+                                }}
+                            }}
                         }}
+                        break;
                     }}
+                    next = next.nextSibling;
                 }}
             }}
 
