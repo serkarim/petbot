@@ -60,7 +60,6 @@ class KrestGGParser:
 
                 logger.info(f"🎮 Найдено {len(server_buttons)} серверов")
 
-                # Кликаем на каждую кнопку сервера
                 for i, button in enumerate(server_buttons, 1):
                     try:
                         server_name = await page.evaluate('el => el.textContent.trim()', button)
@@ -96,71 +95,67 @@ class KrestGGParser:
                 return []
 
     async def _extract_pet_nicks(self, page) -> List[str]:
-        """Извлекает ники с [PET] из DOM"""
+        """Извлекает ТОЛЬКО ники с [PET] после img тегов"""
         js_code = f"""
         () => {{
             const results = [];
             const tag = "{self.clan_tag}".toUpperCase();
-            const tagPattern = `[${{tag}}]`;
-            const tagPatternS = `[${{tag}}S]`;
+            const tagPatterns = [`[${{tag}}]`, `[${{tag}}S]`];
 
-            // Ищем все текстовые узлы
-            const walker = document.createTreeWalker(
-                document.body,
-                NodeFilter.SHOW_TEXT,
-                null,
-                false
-            );
+            // Ищем ВСЕ img на странице (иконки ролей игроков)
+            const imgs = document.querySelectorAll('img');
 
-            const textNodes = [];
-            while (walker.nextNode()) {{
-                textNodes.push(walker.currentNode);
-            }}
+            for (const img of imgs) {{
+                // Берем следующий текстовый узел после img
+                let next = img.nextSibling;
 
-            for (const node of textNodes) {{
-                const text = node.textContent.trim();
-                if (!text || text.length < 5) continue;
+                // Если следующий элемент - текст
+                if (next && next.nodeType === Node.TEXT_NODE) {{
+                    const text = next.textContent.trim();
 
-                // Проверяем на наличие тега [PET] или [PETs]
-                if (text.toUpperCase().includes(tagPattern) || 
-                    text.toUpperCase().includes(tagPatternS)) {{
-
-                    // Разбиваем на слова
-                    const words = text.split(/\\s+/);
-                    for (const word of words) {{
-                        const cleanWord = word.replace(/[^\\w\\[\\]]/g, '');
-                        if (cleanWord.toUpperCase().includes(tagPattern) || 
-                            cleanWord.toUpperCase().includes(tagPatternS)) {{
-                            if (cleanWord.length >= 5 && !results.includes(cleanWord)) {{
-                                results.push(cleanWord);
+                    // Проверяем на наличие тега [PET] или [PETs]
+                    for (const pattern of tagPatterns) {{
+                        if (text.toUpperCase().includes(pattern)) {{
+                            // Разбиваем на слова и берем первое (ник)
+                            const words = text.split(/\\s+/);
+                            for (const word of words) {{
+                                const cleanWord = word.replace(/[^\\w\\[\\]]/g, '');
+                                if (cleanWord.length >= 5 && 
+                                    (cleanWord.toUpperCase().includes(`[${{tag}}]`) || 
+                                     cleanWord.toUpperCase().includes(`[${{tag}}S]`))) {{
+                                    if (!results.includes(cleanWord)) {{
+                                        results.push(cleanWord);
+                                    }}
+                                    break; // Берем только первый ник
+                                }}
                             }}
+                            break;
                         }}
                     }}
                 }}
-            }}
 
-            // Дополнительно ищем рядом с картинками
-            const imgs = document.querySelectorAll('img');
-            for (const img of imgs) {{
-                let next = img.nextSibling;
-                while (next) {{
-                    if (next.nodeType === Node.TEXT_NODE) {{
-                        const text = next.textContent.trim();
-                        if (text && text.length >= 5) {{
-                            if (text.toUpperCase().includes(tagPattern) || 
-                                text.toUpperCase().includes(tagPatternS)) {{
-                                const words = text.split(/\\s+/);
-                                for (const w of words) {{
-                                    const clean = w.replace(/[^\\w\\[\\]]/g, '');
-                                    if (clean.length >= 5 && !results.includes(clean)) {{
-                                        results.push(clean);
+                // Также проверяем следующий элемент (если это span/div с ником)
+                if (img.nextElementSibling) {{
+                    const sibling = img.nextElementSibling;
+                    const text = sibling.textContent.trim().split('\\n')[0].trim();
+
+                    for (const pattern of tagPatterns) {{
+                        if (text.toUpperCase().includes(pattern)) {{
+                            const words = text.split(/\\s+/);
+                            for (const word of words) {{
+                                const cleanWord = word.replace(/[^\\w\\[\\]]/g, '');
+                                if (cleanWord.length >= 5 && cleanWord.length <= 30 &&
+                                    (cleanWord.toUpperCase().includes(`[${{tag}}]`) || 
+                                     cleanWord.toUpperCase().includes(`[${{tag}}S]`))) {{
+                                    if (!results.includes(cleanWord)) {{
+                                        results.push(cleanWord);
                                     }}
+                                    break;
                                 }}
                             }}
+                            break;
                         }}
-                        break;
                     }}
-                    next = next.nextSibling;
                 }}
             }}
 
