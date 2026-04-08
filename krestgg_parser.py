@@ -1,8 +1,8 @@
 # krestgg_parser.py
 import asyncio
 import logging
-import time
 import re
+import time
 from typing import List, Set
 from playwright.async_api import async_playwright
 
@@ -13,7 +13,7 @@ CLAN_TAG = "PET"
 
 BROWSER_ARGS = [
     "--no-sandbox",
-    "--disable-setuid-sandbox",
+    "--disable-setuid-s",
     "--disable-dev-shm-usage",
     "--disable-gpu",
     "--single-process",
@@ -30,12 +30,10 @@ class KrestGGParser:
 
     async def get_pet_online(self, force_refresh: bool = False) -> List[str]:
         now = time.time()
-
         if not force_refresh and self._cache["data"] and (now - self._cache["timestamp"]) < self._cache["ttl"]:
             return self._cache["data"]
 
         logger.info(f"🔍 Сканирую krestgg.ru на наличие [{self.clan_tag}]...")
-
         all_online: Set[str] = set()
 
         async with async_playwright() as p:
@@ -43,131 +41,85 @@ class KrestGGParser:
                 browser = await p.chromium.launch(headless=True, args=BROWSER_ARGS)
                 context = await browser.new_context(
                     user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                    viewport={"width": 1920, "height": 1080}
+                    viewport={"width": 1440, "height": 900}
                 )
                 page = await context.new_page()
-
                 await page.goto(BASE_URL, wait_until="domcontentloaded", timeout=self.timeout)
-                await page.wait_for_timeout(2000)
+                await page.wait_for_timeout(1500)  # Ждём инициализацию SPA
 
-                # Ищем кнопки серверов по тексту "[RU]"
-                server_buttons = await page.query_selector_all("text=[RU]")
-
-                if not server_buttons:
-                    logger.warning("⚠️ Не найдены кнопки серверов!")
+                # Ищем вкладки серверов по тексту [RU]
+                server_tabs = await page.locator("*").filter(has_text=re.compile(r"\[RU\]")).all()
+                if not server_tabs:
+                    logger.warning("⚠️ Не найдены вкладки серверов")
                     await browser.close()
                     return []
 
-                logger.info(f"🎮 Найдено {len(server_buttons)} серверов")
+                logger.info(f"🎮 Найдено {len(server_tabs)} серверов")
 
-                for i, button in enumerate(server_buttons, 1):
+                for i, tab in enumerate(server_tabs, 1):
                     try:
-                        server_name = await page.evaluate('el => el.textContent.trim()', button)
-                        logger.debug(f"[{i}/{len(server_buttons)}] Кликаем: {server_name}")
+                        tab_text = await tab.inner_text()
+                        # Пропускаем дубли и не-серверные элементы
+                        if "Кресты" not in tab_text:
+                            continue
 
-                        await button.click()
-                        await page.wait_for_timeout(1000)
+                        logger.debug(f"[{i}/{len(server_tabs)}] Переключаю: {tab_text.strip()}")
+                        await tab.click()
 
-                        # Парсим игроков с тегом [PET]
-                        pet_players = await self._extract_pet_nicks(page)
+                        # Ждём обновления списка игроков (лоадер или просто сеть)
+                        await page.wait_for_load_state("networkidle", timeout=5000)
+                        await page.wait_for_timeout(400)
 
-                        if pet_players:
-                            logger.debug(f"✅ {server_name}: найдено {len(pet_players)} [PET]")
-                            all_online.update(pet_players)
-
-                        await page.wait_for_timeout(200)
+                        nicks = await self._extract_pet_nicks(page)
+                        if nicks:
+                            logger.debug(f"✅ {tab_text.strip()}: +{len(nicks)} игроков")
+                            all_online.update(nicks)
 
                     except Exception as e:
-                        logger.debug(f"⚠️ Ошибка сервера #{i}: {e}")
+                        logger.debug(f"⚠️ Ошибка на вкладке #{i}: {e}")
                         continue
 
                 await browser.close()
-
                 result = sorted(list(all_online))
                 self._cache["data"] = result
                 self._cache["timestamp"] = time.time()
-
                 logger.info(f"✨ Всего [{self.clan_tag}] онлайн: {len(result)}")
                 return result
 
             except Exception as e:
-                logger.error(f"❌ Ошибка: {type(e).__name__}: {e}")
+                logger.error(f"❌ Ошибка парсинга: {type(e).__name__}: {e}")
                 return []
 
     async def _extract_pet_nicks(self, page) -> List[str]:
-        """Извлекает ТОЛЬКО ники с [PET] после img тегов"""
-        js_code = f"""
-        () => {{
-            const results = [];
-            const tag = "{self.clan_tag}".toUpperCase();
-            const tagPatterns = [`[${{tag}}]`, `[${{tag}}S]`];
+        """Ищет ники с [PET] или [PETs] через нативные локаторы Playwright"""
+        nicks = set()
+        # Регулярка для тега клана
+        tag_pattern = re.compile(r"\[PETs?\]", re.IGNORECASE)
 
-            // Ищем ВСЕ img на странице (иконки ролей игроков)
-            const imgs = document.querySelectorAll('img');
+        # Ищем только видимые элементы, содержащие тег
+        elements = await page.locator("*").filter(has_text=tag_pattern).all()
 
-            for (const img of imgs) {{
-                // Берем следующий текстовый узел после img
-                let next = img.nextSibling;
+        for el in elements:
+            try:
+                text = await el.inner_text()
+                if not text or len(text) > 100:  # Игнорируем огромные блоки
+                    continue
 
-                // Если следующий элемент - текст
-                if (next && next.nodeType === Node.TEXT_NODE) {{
-                    const text = next.textContent.trim();
+                # 1. Убираем кнопку "В друзья" (часто прилипает без пробела)
+                clean = re.sub(r"В\s*друзья", "", text, flags=re.IGNORECASE)
+                # 2. Схлопываем пробелы и переносы строк
+                clean = re.sub(r"\s+", " ", clean).strip()
+                # 3. Вытаскиваем ник: [PET] Name или [PETs] Name
+                match = re.search(r"(\[PETs?\]\s*[A-Za-z0-9А-Яа-я_\-\.\!\?]+)", clean, re.IGNORECASE)
 
-                    // Проверяем на наличие тега [PET] или [PETs]
-                    for (const pattern of tagPatterns) {{
-                        if (text.toUpperCase().includes(pattern)) {{
-                            // Разбиваем на слова и берем первое (ник)
-                            const words = text.split(/\\s+/);
-                            for (const word of words) {{
-                                const cleanWord = word.replace(/[^\\w\\[\\]]/g, '');
-                                if (cleanWord.length >= 5 && 
-                                    (cleanWord.toUpperCase().includes(`[${{tag}}]`) || 
-                                     cleanWord.toUpperCase().includes(`[${{tag}}S]`))) {{
-                                    if (!results.includes(cleanWord)) {{
-                                        results.push(cleanWord);
-                                    }}
-                                    break; // Берем только первый ник
-                                }}
-                            }}
-                            break;
-                        }}
-                    }}
-                }}
+                if match:
+                    nick = match.group(1).strip()
+                    if 5 <= len(nick) <= 30:  # Фильтр адекватной длины
+                        nicks.add(nick)
+            except Exception:
+                continue
 
-                // Также проверяем следующий элемент (если это span/div с ником)
-                if (img.nextElementSibling) {{
-                    const sibling = img.nextElementSibling;
-                    const text = sibling.textContent.trim().split('\\n')[0].trim();
-
-                    for (const pattern of tagPatterns) {{
-                        if (text.toUpperCase().includes(pattern)) {{
-                            const words = text.split(/\\s+/);
-                            for (const word of words) {{
-                                const cleanWord = word.replace(/[^\\w\\[\\]]/g, '');
-                                if (cleanWord.length >= 5 && cleanWord.length <= 30 &&
-                                    (cleanWord.toUpperCase().includes(`[${{tag}}]`) || 
-                                     cleanWord.toUpperCase().includes(`[${{tag}}S]`))) {{
-                                    if (!results.includes(cleanWord)) {{
-                                        results.push(cleanWord);
-                                    }}
-                                    break;
-                                }}
-                            }}
-                            break;
-                        }}
-                    }}
-                }}
-            }}
-
-            return results;
-        }}
-        """
-        try:
-            nicks = await page.evaluate(js_code)
-            return [str(n).strip() for n in nicks if n and str(n).strip()]
-        except Exception as e:
-            logger.debug(f"⚠️ Ошибка JS: {e}")
-            return []
+        return list(nicks)
 
 
 parser = KrestGGParser()
