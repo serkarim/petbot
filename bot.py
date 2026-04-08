@@ -1527,8 +1527,7 @@ async def cmd_pet_online(message: types.Message):
             for i in range(0, count, 5):
                 chunk = players[i:i + 5]
                 # Убираем дублирующий тег из ника для красоты
-                clean_nicks = [re.sub(r'\[PETs?\]\s*', '', p, flags=re.I).strip() for p in chunk]
-                lines.append("  • " + "  • ".join(f"<code>{n}</code>" for n in clean_nicks))
+                clean_nicks = [re.sub(r'\[PET[sStTpP]?\]\s*', '', p, flags=re.I).strip() for p in chunk]                lines.append("  • " + "  • ".join(f"<code>{n}</code>" for n in clean_nicks))
             lines.append("")  # Пустая строка между серверами
 
         lines.append(f"📊 <i>Всего онлайн: {total} | Обновлено: {datetime.now().strftime('%H:%M:%S')}</i>")
