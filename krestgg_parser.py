@@ -91,38 +91,42 @@ class KrestGGParser:
 
     async def _find_server_tabs(self, page) -> List:
         """Находит кликабельные вкладки серверов, игнорируя скрытые элементы"""
-        # Паттерн: [RU][СЕРВЕР] Кресты. Учитываем +, цифры и буквы (например [AAS+], [RAAS+])
+        # Паттерн: [RU][СЕРВЕР] Кресты. Учитываем +, цифры и буквы
         pattern = re.compile(r"\[RU\]\[[\w+]+\]\s*Кресты")
 
-        # Ищем среди div, button, span, a. filter(has_text=pattern) работает быстро.
-        # .filter(visible=True) в Python Playwright не существует, используем проверку координат ниже.
         candidates = await page.locator("div, button, span, a").filter(has_text=pattern).all()
 
-        tabs = []
+        tabs_with_coords = []
         seen_y = set()
 
         for el in candidates:
             try:
-                # bounding_box() возвращает None для скрытых элементов
+                # is_interactive() и bounding_box() — асинхронные методы
+                if not await el.is_interactive():
+                    continue
+
                 box = await el.bounding_box()
                 if not box:
                     continue
 
-                # Фильтр по минимальному размеру, чтобы не брать мелкие текстовые узлы внутри кнопок
+                # Фильтр по минимальному размеру, чтобы не брать текстовые ноды внутри кнопок
                 if box['height'] < 20 or box['width'] < 50:
                     continue
 
-                # Привязываемся к Y-координате (строка), чтобы исключить дубли (родитель/потомок)
+                # Привязываемся к Y-координате (строка), чтобы исключить дубли
                 y_key = round(box["y"])
                 if y_key not in seen_y:
                     seen_y.add(y_key)
-                    tabs.append(el)
-            except:
+                    # Сохраняем X координату вместе с элементом
+                    tabs_with_coords.append((box["x"], el))
+            except Exception:
                 continue
 
-        # Сортируем слева направо, как на экране
-        tabs.sort(key=lambda el: el.bounding_box()["x"])
-        return tabs
+        # Сортируем уже полученные данные по X координате (слева направо)
+        tabs_with_coords.sort(key=lambda item: item[0])
+
+        # Возвращаем только элементы
+        return [el for _, el in tabs_with_coords]
 
     async def _extract_pet_players(self, page) -> List[str]:
         """Извлекает ники с тегом [PET] и его вариациями (PETS, PETt, PETP и т.д.)"""
