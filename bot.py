@@ -1512,22 +1512,22 @@ async def cmd_pet_online(message: types.Message):
             await status.edit_text("🔴 Сейчас нет игроков [PET] в сети или сайт не ответил.")
             return
 
-        # Формируем ответ
         lines = ["🟢 <b>Клан [PET] по серверам:</b>\n"]
         total = 0
 
         for server, players in data.items():
-            # Чистим название сервера для вывода
+            # Чистим название сервера от префикса [RU]
             srv_clean = re.sub(r'\[RU\]\s*', '', server, flags=re.I).strip()
             count = len(players)
             total += count
             lines.append(f"🎮 <b>{srv_clean}</b> ({count}):")
 
-            # Группируем по 5 ников в строку
+            # Группируем по 5 ников в строку для читаемости
             for i in range(0, count, 5):
                 chunk = players[i:i + 5]
-                # Убираем дублирующий тег из ника для красоты
-                clean_nicks = [re.sub(r'\[PET[sStTpP]?\]\s*', '', p, flags=re.I).strip() for p in chunk]                lines.append("  • " + "  • ".join(f"<code>{n}</code>" for n in clean_nicks))
+                # Убираем тег из ника для красоты вывода
+                clean_nicks = [re.sub(r'\[PET[sStTpP]?\]\s*', '', p, flags=re.I).strip() for p in chunk]
+                lines.append("  • " + "  • ".join(f"<code>{n}</code>" for n in clean_nicks))
             lines.append("")  # Пустая строка между серверами
 
         lines.append(f"📊 <i>Всего онлайн: {total} | Обновлено: {datetime.now().strftime('%H:%M:%S')}</i>")
