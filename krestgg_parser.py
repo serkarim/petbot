@@ -3,12 +3,11 @@ import re
 import time
 import logging
 from typing import Dict, List
-from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
+from playwright.async_api import async_playwright
 
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://krestgg.ru"
-# Аргументы для запуска Chromium на Railway (экономия памяти и обход блокировок)
 BROWSER_ARGS = [
     "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
     "--disable-gpu", "--single-process", "--disable-extensions", "--no-zygote"
@@ -40,17 +39,16 @@ class KrestGGParser:
 
                 await page.goto(BASE_URL, wait_until="domcontentloaded", timeout=self.timeout)
                 await page.wait_for_load_state("networkidle", timeout=8000)
-                await page.wait_for_timeout(1000)  # Пауза для прогрузки React-компонентов
+                await page.wait_for_timeout(1500)  # Ждём рендер React-компонентов
 
-                # 1. Находим вкладки серверов
                 server_tabs = await self._find_server_tabs(page)
                 if not server_tabs:
                     logger.warning("⚠️ Вкладки серверов не найдены")
+                    await browser.close()
                     return {}
 
                 logger.info(f"🎮 Найдено {len(server_tabs)} серверов")
 
-                # 2. Кликаем по каждой вкладке и парсим
                 for tab in server_tabs:
                     try:
                         raw_name = await tab.inner_text()
@@ -60,17 +58,16 @@ class KrestGGParser:
                         logger.debug(f"🔄 Переключаю на: {clean_name}")
                         await tab.click()
 
-                        # Ждём обновления списка игроков (лоадер или просто сеть)
+                        # Ждём обновления списка игроков
                         await page.wait_for_load_state("networkidle", timeout=5000)
                         await page.wait_for_timeout(400)
 
-                        # Парсим игроков для этого сервера
                         players = await self._extract_pet_players(page)
                         if players:
                             result[clean_name] = players
                             logger.debug(f"✅ {clean_name}: +{len(players)} игроков")
 
-                        await page.wait_for_timeout(200)  # Небольшая пауза между кликами
+                        await page.wait_for_timeout(200)
                     except Exception as e:
                         logger.debug(f"⚠️ Ошибка вкладки {raw_name}: {e}")
                         continue
@@ -90,43 +87,35 @@ class KrestGGParser:
                     pass
 
     async def _find_server_tabs(self, page) -> List:
-        """Находит кликабельные вкладки серверов, игнорируя скрытые элементы"""
-        # Паттерн: [RU][СЕРВЕР] Кресты. Учитываем +, цифры и буквы
-        pattern = re.compile(r"\[RU\]\[[\w+]+\]\s*Кресты")
+        """Находит кликабельные вкладки серверов по маркеру [RU]"""
+        # Ищем ВСЕ элементы, содержащие "[RU]" (уникально для шапки серверов)
+        candidates = await page.get_by_text(re.compile(r"\[RU\]")).all()
+        logger.debug(f"🔎 Найдено кандидатов с [RU]: {len(candidates)}")
 
-        candidates = await page.locator("div, button, span, a").filter(has_text=pattern).all()
-
-        tabs_with_coords = []
-        seen_y = set()
+        valid_tabs = []
+        seen_rows = set()
 
         for el in candidates:
             try:
-                # is_interactive() и bounding_box() — асинхронные методы
-                if not await el.is_interactive():
+                # Фильтруем только видимые и кликабельные элементы
+                if not await el.is_visible() or not await el.is_interactive():
                     continue
 
                 box = await el.bounding_box()
-                if not box:
+                if not box or box.get('width', 0) < 40 or box.get('height', 0) < 15:
                     continue
 
-                # Фильтр по минимальному размеру, чтобы не брать текстовые ноды внутри кнопок
-                if box['height'] < 20 or box['width'] < 50:
-                    continue
-
-                # Привязываемся к Y-координате (строка), чтобы исключить дубли
-                y_key = round(box["y"])
-                if y_key not in seen_y:
-                    seen_y.add(y_key)
-                    # Сохраняем X координату вместе с элементом
-                    tabs_with_coords.append((box["x"], el))
+                # Дедупликация по строке (Y координата с допуском 15px)
+                row_key = round(box["y"] / 15) * 15
+                if row_key not in seen_rows:
+                    seen_rows.add(row_key)
+                    valid_tabs.append((box["x"], el))
             except Exception:
                 continue
 
-        # Сортируем уже полученные данные по X координате (слева направо)
-        tabs_with_coords.sort(key=lambda item: item[0])
-
-        # Возвращаем только элементы
-        return [el for _, el in tabs_with_coords]
+        # Сортируем слева направо, как на экране
+        valid_tabs.sort(key=lambda item: item[0])
+        return [el for _, el in valid_tabs]
 
     async def _extract_pet_players(self, page) -> List[str]:
         """Извлекает ники с тегом [PET] и его вариациями (PETS, PETt, PETP и т.д.)"""
@@ -137,7 +126,7 @@ class KrestGGParser:
             const tagRegex = /\\[PET[sStTpP]?\\]/i;
             const nameRegex = /(\\[PET[sStTpP]?\\]\\s*[A-Za-z0-9А-Яа-я_\\-\\.!?]{2,20})/i;
 
-            // Ищем только в основном контенте (main/section), пропускаем шапку сайта
+            // Ищем только в основном контенте, пропускаем шапку сайта
             const mainArea = document.querySelector('main') || 
                              document.querySelector('section') || 
                              document.body;
@@ -148,7 +137,6 @@ class KrestGGParser:
                 const text = node.textContent.trim();
                 if (!text || text.length > 60) continue;
 
-                // Проверяем наличие тега в тексте
                 if (tagRegex.test(text)) {
                     const match = text.match(nameRegex);
                     if (match) {
