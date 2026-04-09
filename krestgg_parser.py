@@ -13,12 +13,14 @@ BROWSER_ARGS = [
     "--disable-gpu", "--single-process", "--disable-extensions", "--no-zygote"
 ]
 
+
 class KrestGGParser:
     def __init__(self, timeout: int = 15000):
         self.timeout = timeout
         self._cache = {"data": {}, "timestamp": 0, "ttl": 120}  # Кэш 2 минуты
 
     async def get_pet_online_by_server(self, force_refresh: bool = False) -> Dict[str, List[str]]:
+        """Возвращает словарь {название_сервера: [список_игроков]}"""
         now = time.time()
         if not force_refresh and self._cache["data"] and (now - self._cache["timestamp"]) < self._cache["ttl"]:
             return self._cache["data"]
@@ -36,8 +38,9 @@ class KrestGGParser:
                 page = await context.new_page()
 
                 await page.goto(BASE_URL, wait_until="domcontentloaded", timeout=self.timeout)
+                # Ждём полной загрузки сети и рендера JS-компонентов
                 await page.wait_for_load_state("networkidle", timeout=10000)
-                await page.wait_for_timeout(1500)  # Ждём полный рендер шапки
+                await page.wait_for_timeout(2000)  # Доп. пауза для React-рендера
 
                 server_tabs = await self._find_server_tabs(page)
                 if not server_tabs:
@@ -50,23 +53,24 @@ class KrestGGParser:
                 for i, tab in enumerate(server_tabs, 1):
                     try:
                         raw_name = await tab.inner_text()
+                        # Чистим название от онлайна: "100 /100 (+14)" -> "[AAS+] Кресты"
                         clean_name = re.sub(r'\s*\d+\s*/\s*\d+\(?\+?\d*\)?', '', raw_name).strip()
 
                         logger.debug(f"[{i}/{len(server_tabs)}] Переключаю на: {clean_name}")
 
-                        # 1. Кликаем по самой вкладке
+                        # 1. Кликаем по вкладке
                         await tab.click()
 
-                        # 2. Ждём завершения AJAX-запроса
+                        # 2. Ждём завершения AJAX и обновления DOM
                         try:
                             await page.wait_for_load_state("networkidle", timeout=6000)
                         except PlaywrightTimeout:
                             logger.debug(f"⏳ networkidle таймаут для {clean_name}, продолжаем...")
 
-                        # 3. Ждём обновления DOM (SPA часто рендерит список с задержкой)
+                        # 3. Ждём рендера списка игроков (SPA часто задерживается на 0.5-1с)
                         await page.wait_for_timeout(1200)
 
-                        # 4. Парсим только после стабилизации
+                        # 4. Парсим игроков
                         players = await self._extract_pet_players(page)
                         if players:
                             result[clean_name] = players
@@ -88,31 +92,39 @@ class KrestGGParser:
                 logger.error(f"❌ Ошибка парсинга: {type(e).__name__}: {e}")
                 return {}
             finally:
-                try: await browser.close()
-                except: pass
+                try:
+                    await browser.close()
+                except:
+                    pass
 
     async def _find_server_tabs(self, page) -> List:
-        """Находит ТОЛЬКО вкладки в верхней панели, игнорируя текст в списках игроков"""
-        pattern = re.compile(r"\[RU\]\[[\w+]+\]\s*Кресты")
+        """Находит ТОЛЬКО вкладки в верхней панели через нативный text= селектор"""
+        # 1. Ждем появления хотя бы одного элемента с [RU]
+        try:
+            await page.locator("text=[RU]").first.wait_for(state="visible", timeout=8000)
+        except PlaywrightTimeout:
+            logger.warning("⏳ Timeout ожидания вкладок, пробую парсить как есть...")
+            return []
 
-        # Ищем элементы с текстом сервера
-        candidates = await page.get_by_text(pattern).all()
+        # 2. Собираем ВСЕ элементы, содержащие [RU] (Playwright сам склеивает разбитые <span>)
+        candidates = await page.locator("text=[RU]").all()
+        logger.debug(f"🔎 Найдено кандидатов с [RU]: {len(candidates)}")
 
         valid_tabs = []
         seen_y = set()
 
         for el in candidates:
             try:
-                # Фильтр по позиции: вкладки находятся вверху (< 150px)
                 box = await el.bounding_box()
-                if not box or box.get('y', 999) > 150:
-                    continue
+                if not box: continue
 
-                # Берём только видимые и кликабельные элементы
-                if not await el.is_visible() or not await el.is_interactive():
-                    continue
+                # Игнорируем элементы ниже верхней панели (обычно < 150px)
+                if box.get('y', 999) > 150: continue
 
-                # Дедупликация по строке (Y с шагом 10px)
+                # Игнорируем слишком узкие элементы (вероятно, текст внутри кнопки, а не сама кнопка)
+                if box.get('width', 0) < 30: continue
+
+                # Дедупликация по строке (Y координата с шагом 10px)
                 y_key = round(box["y"] / 10) * 10
                 if y_key not in seen_y:
                     seen_y.add(y_key)
@@ -120,7 +132,7 @@ class KrestGGParser:
             except Exception:
                 continue
 
-        # Сортируем слева направо
+        # Сортируем слева направо, как на экране
         valid_tabs.sort(key=lambda item: item[0])
         return [el for _, el in valid_tabs]
 
@@ -132,7 +144,7 @@ class KrestGGParser:
             const tagRegex = /\\[PET[sStTpP]?\\]/i;
             const nameRegex = /(\\[PET[sStTpP]?\\]\\s*[A-Za-z0-9А-Яа-я_\\-\\.!?]{2,20})/i;
 
-            // Сканируем только основной контент, пропускаем шапку и сайдбары
+            // Ищем только в основном контенте, пропускаем шапку сайта
             const mainArea = document.querySelector('main') || 
                              document.querySelector('section') || 
                              document.body;
@@ -147,6 +159,7 @@ class KrestGGParser:
                     const match = text.match(nameRegex);
                     if (match) {
                         let nick = match[1].trim();
+                        // Чистим прилипшую кнопку "В друзья"
                         nick = nick.replace(/В\\s*друзья/gi, '').trim();
                         if (nick.length >= 5 && nick.length <= 25 && !results.has(nick)) {
                             results.add(nick);
@@ -164,5 +177,6 @@ class KrestGGParser:
             logger.debug(f"⚠️ Ошибка JS-извлечения: {e}")
             return []
 
-# Глобальный экземпляр
+
+# Глобальный экземпляр для импорта
 parser = KrestGGParser()
