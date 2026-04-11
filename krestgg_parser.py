@@ -36,14 +36,13 @@ class KrestGGParser:
                 )
                 page = await context.new_page()
 
-                # Переход и ожидание
                 await page.goto(BASE_URL, wait_until="domcontentloaded", timeout=self.timeout)
                 try:
                     await page.wait_for_load_state("networkidle", timeout=10000)
                 except PlaywrightTimeout:
                     logger.debug("⏳ networkidle таймаут, продолжаем...")
 
-                await page.wait_for_timeout(2500)  # Ждем рендер React
+                await page.wait_for_timeout(2500)
 
                 server_tabs = await self._find_server_tabs(page)
                 if not server_tabs:
@@ -56,15 +55,11 @@ class KrestGGParser:
                 for i, tab in enumerate(server_tabs, 1):
                     try:
                         raw_name = await tab.inner_text()
-                        # Чистим название от онлайна
-                        clean_name = re.sub(r'\s*\d+\s*/\s*\d+\(?\+?\d*\)?', '', raw_name).strip()
+                        clean_name = re.sub(r'\s*\d+\s*/\s*\d+\s*\(?\+?\d*\)?', '', raw_name).strip()
 
                         logger.debug(f"[{i}/{len(server_tabs)}] Кликаю на: {clean_name}")
-
-                        # Клик с force=True (игнорирует перекрытия)
                         await tab.click(force=True)
 
-                        # Ждем подгрузки данных сервера
                         await page.wait_for_load_state("networkidle", timeout=5000)
                         await page.wait_for_timeout(1000)
 
@@ -94,20 +89,16 @@ class KrestGGParser:
 
     async def _find_server_tabs(self, page) -> List:
         """Ищет вкладки серверов в шапке по координатам и тексту"""
-        # Паттерн: [RU][AAS+] Кресты
-        pattern = re.compile(r"\[RU\]\[[\w+]+\]\s*Кресты")
+        # 🔧 ИСПРАВЛЕНО: корректный паттерн для [RU][AAS+] Кресты
+        pattern = re.compile(r"\[RU\]\[[A-Z0-9+]+\]\s*Кресты", re.IGNORECASE)
 
-        # 1. Ждем появления хотя бы одного элемента с текстом [RU]
         try:
             await page.wait_for_selector("text=[RU]", timeout=8000)
         except PlaywrightTimeout:
             logger.warning("⏳ Timeout ожидания [RU] элементов")
             return []
 
-        # 2. Ищем ВСЕ элементы, содержащие текст сервера
-        # locator("*").filter(has_text=...) находит родителя, содержащего текст
         candidates = await page.locator("*").filter(has_text=pattern).all()
-
         logger.debug(f"🔍 Найдено кандидатов с текстом сервера: {len(candidates)}")
 
         valid_tabs = []
@@ -119,16 +110,13 @@ class KrestGGParser:
                 if not box:
                     continue
 
-                # ФИЛЬТР: Оставляем только элементы из верхней панели (меню)
-                # Обычно меню находится в самом верху (Y < 150)
-                if box['y'] > 150:
+                # 🔧 ИСПРАВЛЕНО: более мягкий фильтр по Y (было >150, стало >200)
+                if box['y'] > 200:
                     continue
 
-                # ФИЛЬТР: Минимальный размер кнопки
                 if box['width'] < 40 or box['height'] < 15:
                     continue
 
-                # ДЕДУПЛИКАЦИЯ: Берем только один элемент из каждой строки (по Y)
                 y_key = round(box['y'] / 10) * 10
                 if y_key not in seen_y:
                     seen_y.add(y_key)
@@ -137,36 +125,47 @@ class KrestGGParser:
             except Exception:
                 continue
 
-        # Сортировка слева направо (по X)
         valid_tabs.sort(key=lambda item: item[0])
         return [el for _, el in valid_tabs]
 
     async def _extract_pet_players(self, page) -> List[str]:
         """Парсинг ников [PET] из DOM"""
+        # 🔧 ИСПРАВЛЕНО: корректные регулярки для тегов клана
         js_code = """
         () => {
             const results = new Set();
-            const tagRegex = /\\[PET[sStTpP]?\\]/i;
-            const nameRegex = /(\\[PET[sStTpP]?\\]\\s*[A-Za-z0-9А-Яа-я_\\-\\.!?]{2,20})/i;
+            // 🔧 Правильный паттерн: ищем [PET], [PETt], [PETs]
+            const tagPattern = /\\[(PET|PETt|PETs)\\]/i;
+            // Паттерн для ника после тега
+            const namePattern = /[A-Za-z0-9А-Яа-я_\\-.!?]{2,25}/;
 
-            // Ищем в основном контенте
-            const mainArea = document.querySelector('main') || 
-                             document.querySelector('section') || 
-                             document.body;
+            // 🔧 Ищем по ВСЕМУ body, а не только main/section
+            const walker = document.createTreeWalker(
+                document.body, 
+                NodeFilter.SHOW_TEXT, 
+                null, 
+                false
+            );
 
-            const walker = document.createTreeWalker(mainArea, NodeFilter.SHOW_TEXT, null, false);
             let node;
             while (node = walker.nextNode()) {
                 const text = node.textContent.trim();
-                if (!text || text.length > 60) continue;
+                if (!text || text.length > 80) continue;
 
-                if (tagRegex.test(text)) {
-                    const match = text.match(nameRegex);
+                // Проверяем наличие тега клана
+                if (tagPattern.test(text)) {
+                    // Извлекаем ник после тега
+                    const match = text.match(new RegExp(
+                        String.raw`\\[(?:PET|PETt|PETs)\\]\\s*` + namePattern.source, 
+                        'i'
+                    ));
                     if (match) {
-                        let nick = match[1].trim();
-                        // Чистим кнопку "В друзья"
-                        nick = nick.replace(/В\\s*друзья/gi, '').trim();
-                        if (nick.length >= 5 && nick.length <= 25 && !results.has(nick)) {
+                        let nick = `[${match[0].match(tagPattern)[0]}] ${match[1]}`.trim();
+                        // Чистим "В друзья" и лишние пробелы
+                        nick = nick.replace(/\\s*В\\s*друзья\\s*/gi, '').trim();
+
+                        // Фильтр: ник от 5 до 30 символов
+                        if (nick.length >= 6 && nick.length <= 35 && !results.has(nick)) {
                             results.add(nick);
                         }
                     }
@@ -177,7 +176,7 @@ class KrestGGParser:
         """
         try:
             nicks = await page.evaluate(js_code)
-            return [str(n).strip() for n in nicks if n]
+            return [str(n).strip() for n in nicks if n and isinstance(n, str)]
         except Exception as e:
             logger.debug(f"⚠️ Ошибка JS: {e}")
             return []

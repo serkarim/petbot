@@ -1499,16 +1499,20 @@ import re
 from datetime import datetime
 from krestgg_parser import parser as krest_parser
 
+import traceback
+import re
+from datetime import datetime
+from krestgg_parser import parser as krest_parser
+
 
 @dp.message_handler(commands=['pet_online', 'пет_онлайн', 'клан_онлайн'])
 async def cmd_pet_online(message: types.Message):
-    """Показывает онлайн [PET] с разделением по серверам"""
     status = await message.answer("🔍 Сканирую сервера Крестов...")
-
     try:
         data = await krest_parser.get_pet_online_by_server()
 
-        if not data:
+        # ✅ ИСПРАВЛЕНО: добавлена переменная data
+        if not
             await status.edit_text("🔴 Сейчас нет игроков [PET] в сети или сайт не ответил.")
             return
 
@@ -1516,26 +1520,23 @@ async def cmd_pet_online(message: types.Message):
         total = 0
 
         for server, players in data.items():
-            # Чистим название сервера от префикса [RU]
             srv_clean = re.sub(r'\[RU\]\s*', '', server, flags=re.I).strip()
             count = len(players)
             total += count
             lines.append(f"🎮 <b>{srv_clean}</b> ({count}):")
 
-            # Группируем по 5 ников в строку для читаемости
             for i in range(0, count, 5):
                 chunk = players[i:i + 5]
-                # Убираем тег из ника для красоты вывода
                 clean_nicks = [re.sub(r'\[PET[sStTpP]?\]\s*', '', p, flags=re.I).strip() for p in chunk]
                 lines.append("  • " + "  • ".join(f"<code>{n}</code>" for n in clean_nicks))
-            lines.append("")  # Пустая строка между серверами
+            lines.append("")
 
         lines.append(f"📊 <i>Всего онлайн: {total} | Обновлено: {datetime.now().strftime('%H:%M:%S')}</i>")
         await status.edit_text("\n".join(lines), parse_mode="HTML")
 
     except Exception as e:
-        logger.error(f"Ошибка /pet_online: {e}")
-        await status.edit_text("⚠️ Произошла ошибка при опросе серверов.")
+        logger.error(f"Ошибка /pet_online:\n{traceback.format_exc()}")
+        await status.edit_text("⚠️ Произошла ошибка при опросе серверов. Проверь логи.")
 # =========================
 # 📬 АДМИН-ПАНЕЛЬ ЗАЯВОК
 # =========================
@@ -2338,7 +2339,13 @@ async def set_new_role(callback: types.CallbackQuery, state: FSMContext):
         if member:
             update_role(member, new_role)
             safe_member = html_lib.escape(member)
-            await callback.message.edit_text(f"✅ Роль для {safe_member} обновлена на {new_role}", reply_markup=main_menu(callback.from_user.id))
+            user_id = callback.from_user.id
+            existing_nick = find_member_by_tg_id(user_id)
+            apps = get_applications(status="ожидает")
+            has_pending = any(app[4] == str(user_id) for app in apps)
+
+            await callback.message.edit_text(f"✅ Роль для {safe_member} обновлена на {new_role}", reply_markup=main_menu(callback.from_user.id, is_registered=(existing_nick is not None),
+                                                        has_pending_app=has_pending))
         else:
             await callback.message.edit_text("❌ Ошибка: участник не найден")
         await callback.answer()
@@ -2876,7 +2883,12 @@ async def complaint_actions(callback: types.CallbackQuery):
                     await bot.send_message(int(sender_id), f"✅ Жалоба на {violator} рассмотрена. Выдан ПРЕД.", parse_mode="HTML")
                 except:
                     pass
-            await callback.message.edit_text(f"⚠ ПРЕД выдан {violator}. Жалоба закрыта ✅", reply_markup=main_menu(callback.from_user.id))
+            user_id = callback.from_user.id
+            existing_nick = find_member_by_tg_id(user_id)
+            apps = get_applications(status="ожидает")
+            has_pending = any(app[4] == str(user_id) for app in apps)
+            await callback.message.edit_text(f"⚠ ПРЕД выдан {violator}. Жалоба закрыта ✅", reply_markup=main_menu(callback.from_user.id, is_registered=(existing_nick is not None),
+                                                        has_pending_app=has_pending))
             return
         if data[1] == "request" and data[2] == "proof" and len(data) >= 4:
             try:
@@ -2917,7 +2929,12 @@ async def complaint_actions(callback: types.CallbackQuery):
                     await bot.send_message(int(sender_id), f"ℹ️ Жалоба на {target} закрыта без санкций.", parse_mode="HTML")
                 except:
                     pass
-            await callback.message.edit_text("✅ Жалоба закрыта", reply_markup=main_menu(callback.from_user.id))
+            user_id = callback.from_user.id
+            existing_nick = find_member_by_tg_id(user_id)
+            apps = get_applications(status="ожидает")
+            has_pending = any(app[4] == str(user_id) for app in apps)
+            await callback.message.edit_text("✅ Жалоба закрыта", reply_markup=main_menu(callback.from_user.id,is_registered=(existing_nick is not None),
+                                                        has_pending_app=has_pending))
             return
         try:
             idx = int(data[1])
