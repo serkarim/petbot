@@ -1508,11 +1508,13 @@ from krestgg_parser import parser as krest_parser
 @dp.message_handler(commands=['pet_online', 'пет_онлайн', 'клан_онлайн'])
 async def cmd_pet_online(message: types.Message):
     status = await message.answer("🔍 Сканирую сервера Крестов...")
-    try:
-        data = await krest_parser.get_pet_online_by_server()
 
-        # ✅ ИСПРАВЛЕНО: добавлена переменная data
-        if not
+    try:
+        # Получаем данные от парсера
+        data = await krest_parser.get_pet_online_by_server(force_refresh=True)
+
+        # 🔧 ИСПРАВЛЕНО: полная проверка на пустой результат
+        if not data or not any(data.values()):
             await status.edit_text("🔴 Сейчас нет игроков [PET] в сети или сайт не ответил.")
             return
 
@@ -1520,23 +1522,48 @@ async def cmd_pet_online(message: types.Message):
         total = 0
 
         for server, players in data.items():
+            # Чистим название сервера: [RU][AAS+] Кресты → AAS+
             srv_clean = re.sub(r'\[RU\]\s*', '', server, flags=re.I).strip()
+            srv_clean = re.sub(r'\s*Кресты$', '', srv_clean, flags=re.I).strip()
+
             count = len(players)
+            if count == 0:
+                continue
+
             total += count
             lines.append(f"🎮 <b>{srv_clean}</b> ({count}):")
 
+            # Группируем по 5 ников в строку
             for i in range(0, count, 5):
                 chunk = players[i:i + 5]
-                clean_nicks = [re.sub(r'\[PET[sStTpP]?\]\s*', '', p, flags=re.I).strip() for p in chunk]
-                lines.append("  • " + "  • ".join(f"<code>{n}</code>" for n in clean_nicks))
-            lines.append("")
+                # Убираем теги [PET]/[PETt]/[PETs], оставляем только ник
+                clean_nicks = [
+                    re.sub(r'\[(?:PET|PETt|PETs)\]\s*', '', p, flags=re.I).strip()
+                    for p in chunk
+                ]
+                # Форматируем: • ник1  • ник2  • ник3
+                nick_str = "  • ".join(f"<code>{n}</code>" for n in clean_nicks if n)
+                if nick_str:
+                    lines.append("  • " + nick_str)
+            lines.append("")  # пустая строка между серверами
 
         lines.append(f"📊 <i>Всего онлайн: {total} | Обновлено: {datetime.now().strftime('%H:%M:%S')}</i>")
-        await status.edit_text("\n".join(lines), parse_mode="HTML")
+
+        # Отправляем сообщение (если текст слишком длинный — разбиваем)
+        full_text = "\n".join(lines)
+        if len(full_text) > 4096:
+            # Telegram лимит: 4096 символов на сообщение
+            await status.edit_text(full_text[:4090] + "\n\n...")
+        else:
+            await status.edit_text(full_text, parse_mode="HTML")
 
     except Exception as e:
-        logger.error(f"Ошибка /pet_online:\n{traceback.format_exc()}")
-        await status.edit_text("⚠️ Произошла ошибка при опросе серверов. Проверь логи.")
+        logger.error(f"❌ Ошибка /pet_online:\n{traceback.format_exc()}")
+        await status.edit_text(
+            "⚠️ Произошла ошибка при опросе серверов.\n"
+            "Проверь логи или попробуй позже.",
+            parse_mode="HTML"
+        )
 # =========================
 # 📬 АДМИН-ПАНЕЛЬ ЗАЯВОК
 # =========================
