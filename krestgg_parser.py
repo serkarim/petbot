@@ -85,11 +85,14 @@ class KrestGGParser:
                     pass
 
     async def _extract_pet_players(self, page) -> List[str]:
-        """Парсит ники с тегом [PET] или |PET| через Playwright локаторы"""
+        """Парсит ники с тегом [PET], |PET| или | PET | (с пробелами)"""
         players = set()
         try:
-            # 🔧 ПОДДЕРЖКА ОБОИХ ФОРМАТОВ: [PET...] и |PET...|
-            tag_pattern = re.compile(r"(?:\[PET[sStTpP]?\]|\|PET[sStTpP]?\|)", re.IGNORECASE)
+            # 🔧 ПОДДЕРЖКА ВСЕХ ФОРМАТОВ: [PET], |PET|, | PET | (с пробелами)
+            tag_pattern = re.compile(
+                r"(?:\[PET[sStTpP]?\]|\|\s*PET[sStTpP]?\s*\|)",
+                re.IGNORECASE
+            )
 
             elements = await page.get_by_text(tag_pattern).all()
 
@@ -98,9 +101,9 @@ class KrestGGParser:
                     text = await el.text_content()
                     if not text: continue
 
-                    # 🔧 Извлекаем имя после [PET] или |PET|
+                    # 🔧 Извлекаем имя после тега (поддержка пробелов)
                     match = re.search(
-                        r"(?:\[PET[sStTpP]?\]|\|PET[sStTpP]?\|)\s*(.+?)(?:В\s*друзья|$)",
+                        r"(?:\[PET[sStTpP]?\]|\|\s*PET[sStTpP]?\s*\|)\s*(.+?)(?:В\s*друзья|$)",
                         text,
                         re.IGNORECASE | re.DOTALL
                     )
