@@ -2268,19 +2268,73 @@ async def process_reason(message: types.Message, state: FSMContext):
             await state.finish()  # ✅ Сброс состояния
             return
 
+
         elif action == "complaint":
+
             add_complaint(username, user_id, member, message.text)
+
             append_log("ЖАЛОБА", username, user_id, member)
 
+            # 🆕 УВЕДОМЛЕНИЕ АДМИНАМ О НОВОЙ ЖАЛОБЕ
+
+            try:
+
+                # Получаем актуальные данные, чтобы вычислить индекс новой строки
+
+                rows = get_complaints()
+
+                new_complaint_idx = len(rows) - 2  # -2 т.к. строка 0 = заголовок
+
+                kb = InlineKeyboardMarkup().add(
+
+                    InlineKeyboardButton("🔍 Открыть жалобу", callback_data=f"complaint_{new_complaint_idx}")
+
+                )
+
+                notify_text = (
+
+                    f"⚖️ <b>Новая жалоба!</b>\n\n"
+
+                    f"👤 От: {username}\n"
+
+                    f"🎯 На: <code>{member}</code>\n"
+
+                    f"📝 Причина: {html_lib.escape(message.text)}"
+
+                )
+
+                for admin_id in ADMINS:
+
+                    try:
+
+                        await bot.send_message(admin_id, notify_text, reply_markup=kb, parse_mode="HTML")
+
+                    except Exception as e:
+
+                        logging.warning(f"❌ Не удалось уведомить админа {admin_id}: {e}")
+
+            except Exception as e:
+
+                logging.error(f"❌ Ошибка отправки уведомления админам: {e}")
+
+            # Остальной код без изменений
+
             existing_nick = find_member_by_tg_id(user_id)
+
             apps = get_applications(status="ожидает")
+
             has_pending = any(app[4] == str(user_id) for app in apps)
 
             await message.answer(
+
                 "⚖ Жалоба отправлена ✅",
+
                 reply_markup=main_menu(user_id, is_registered=(existing_nick is not None), has_pending_app=has_pending)
+
             )
-            await state.finish()  # ✅ Сброс состояния
+
+            await state.finish()
+
             return
 
     except Exception as e:
