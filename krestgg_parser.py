@@ -8,8 +8,6 @@ from playwright.async_api import async_playwright
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://krestgg.ru"
-# Явный список серверов для переключения.
-# Теперь мы не сохраняем элементы, а ищем их по тексту заново.
 SERVERS_TO_CHECK = [
     {"id": "AAS", "text_pattern": r"\[RU\]\[AAS"},
     {"id": "INV", "text_pattern": r"\[RU\]\[INV"},
@@ -48,27 +46,20 @@ class KrestGGParser:
 
                 await page.goto(BASE_URL, wait_until="domcontentloaded", timeout=self.timeout)
                 await page.wait_for_load_state("networkidle", timeout=10000)
-                await page.wait_for_timeout(2000)  # Ждем полной инициализации React
+                await page.wait_for_timeout(2000)
 
                 for srv in SERVERS_TO_CHECK:
                     try:
-                        # 1. Ищем кнопку сервера ЗАНОВО (избегаем ошибки Stale Element)
                         btn = page.get_by_text(re.compile(srv["text_pattern"])).first
 
                         if await btn.count() > 0:
-                            # Получаем имя сервера для лога (обрезаем онлайн-счетчик)
                             raw_name = await btn.text_content()
                             clean_name = re.sub(r'\s*\d+/\d+.*', '', raw_name).strip()
 
                             logger.info(f"🔄 Переключаю на: {clean_name}")
-
-                            # 2. Кликаем (force=True помогает, если элемент перекрыт)
                             await btn.click(force=True)
-
-                            # 3. Ждем обновления списка игроков
                             await page.wait_for_timeout(1500)
 
-                            # 4. Парсим игроков на текущей странице
                             players = await self._extract_pet_players(page)
                             if players:
                                 result[clean_name] = players
@@ -94,23 +85,27 @@ class KrestGGParser:
                     pass
 
     async def _extract_pet_players(self, page) -> List[str]:
-        """Парсит ники с тегом [PET] через Playwright локаторы"""
+        """Парсит ники с тегом [PET] или |PET| через Playwright локаторы"""
         players = set()
         try:
-            # Находим все видимые элементы, содержащие тег [PET
-            elements = await page.get_by_text(re.compile(r"\[PET[sStTpP]?\]", re.IGNORECASE)).all()
+            # 🔧 ПОДДЕРЖКА ОБОИХ ФОРМАТОВ: [PET...] и |PET...|
+            tag_pattern = re.compile(r"(?:\[PET[sStTpP]?\]|\|PET[sStTpP]?\|)", re.IGNORECASE)
+
+            elements = await page.get_by_text(tag_pattern).all()
 
             for el in elements:
                 try:
                     text = await el.text_content()
                     if not text: continue
 
-                    # Извлекаем имя: [PET...] Имя (до "В друзья" или конца строки)
-                    # (.+?) ленивый захват имени
-                    match = re.search(r"\[PET[sStTpP]?\]\s*(.+?)(?:В\s*друзья|$)", text, re.IGNORECASE | re.DOTALL)
+                    # 🔧 Извлекаем имя после [PET] или |PET|
+                    match = re.search(
+                        r"(?:\[PET[sStTpP]?\]|\|PET[sStTpP]?\|)\s*(.+?)(?:В\s*друзья|$)",
+                        text,
+                        re.IGNORECASE | re.DOTALL
+                    )
                     if match:
                         nick = match.group(1).strip()
-                        # Чистим от HTML тегов если попали
                         nick = re.sub(r'<[^>]+>', '', nick).strip()
 
                         if 3 <= len(nick) <= 25:
