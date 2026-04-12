@@ -3,21 +3,11 @@ import re
 import time
 import logging
 from typing import Dict, List
-from playwright.async_api import async_playwright
+from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
 
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://krestgg.ru"
-# Явный список серверов для переключения.
-# Теперь мы не сохраняем элементы, а ищем их по тексту заново.
-SERVERS_TO_CHECK = [
-    {"id": "AAS", "text_pattern": r"\[RU\]\[AAS"},
-    {"id": "INV", "text_pattern": r"\[RU\]\[INV"},
-    {"id": "MINI", "text_pattern": r"\[RU\]\[MINI"},
-    {"id": "RAAS", "text_pattern": r"\[RU\]\[RAAS"},
-    {"id": "TRN", "text_pattern": r"\[RU\]\[TRN"},
-]
-
 BROWSER_ARGS = [
     "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
     "--disable-gpu", "--single-process", "--disable-extensions", "--no-zygote"
@@ -27,14 +17,15 @@ BROWSER_ARGS = [
 class KrestGGParser:
     def __init__(self, timeout: int = 15000):
         self.timeout = timeout
-        self._cache = {"data": {}, "timestamp": 0, "ttl": 120}
+        self._cache = {"data": {}, "timestamp": 0, "ttl": 120}  # Кэш 2 минуты
 
     async def get_pet_online_by_server(self, force_refresh: bool = False) -> Dict[str, List[str]]:
+        """Возвращает словарь {название_сервера: [список_игроков]}"""
         now = time.time()
         if not force_refresh and self._cache["data"] and (now - self._cache["timestamp"]) < self._cache["ttl"]:
             return self._cache["data"]
 
-        logger.info("🔍 Сканирую сервера...")
+        logger.info("🔍 Сканирую вкладки серверов...")
         result = {}
 
         async with async_playwright() as p:
@@ -47,45 +38,58 @@ class KrestGGParser:
                 page = await context.new_page()
 
                 await page.goto(BASE_URL, wait_until="domcontentloaded", timeout=self.timeout)
+                # Ждем полной загрузки сети и рендера JS-компонентов
                 await page.wait_for_load_state("networkidle", timeout=10000)
-                await page.wait_for_timeout(2000)  # Ждем полной инициализации React
+                await page.wait_for_timeout(2000)  # Доп. пауза для React-рендера
 
-                for srv in SERVERS_TO_CHECK:
+                server_tabs = await self._find_server_tabs(page)
+                if not server_tabs:
+                    logger.warning("⚠️ Вкладки серверов не найдены")
+                    await browser.close()
+                    return {}
+
+                logger.info(f"🎮 Найдено {len(server_tabs)} серверов")
+
+                for i, tab in enumerate(server_tabs, 1):
                     try:
-                        # 1. Ищем кнопку сервера ЗАНОВО (избегаем ошибки Stale Element)
-                        btn = page.get_by_text(re.compile(srv["text_pattern"])).first
+                        raw_name = await tab.inner_text()
+                        # Чистим название от онлайна: "100 /100 (+14)" -> "[AAS+] Кресты"
+                        clean_name = re.sub(r'\s*\d+\s*/\s*\d+\(?\+?\d*\)?', '', raw_name).strip()
 
-                        if await btn.count() > 0:
-                            # Получаем имя сервера для лога (обрезаем онлайн-счетчик)
-                            raw_name = await btn.text_content()
-                            clean_name = re.sub(r'\s*\d+/\d+.*', '', raw_name).strip()
+                        logger.debug(f"[{i}/{len(server_tabs)}] Переключаю на: {clean_name}")
 
-                            logger.info(f"🔄 Переключаю на: {clean_name}")
+                        # 1. Кликаем по вкладке
+                        await tab.click(force=True)
 
-                            # 2. Кликаем (force=True помогает, если элемент перекрыт)
-                            await btn.click(force=True)
+                        # 2. Ждём завершения AJAX-запроса
+                        try:
+                            await page.wait_for_load_state("networkidle", timeout=6000)
+                        except PlaywrightTimeout:
+                            pass
 
-                            # 3. Ждем обновления списка игроков
-                            await page.wait_for_timeout(1500)
+                        # 3. Ждём рендера DOM (SPA часто задерживается)
+                        await page.wait_for_timeout(1000)
 
-                            # 4. Парсим игроков на текущей странице
-                            players = await self._extract_pet_players(page)
-                            if players:
-                                result[clean_name] = players
-                                logger.debug(f"✅ {clean_name}: {len(players)} чел.")
+                        # 4. Парсим игроков
+                        players = await self._extract_pet_players(page)
+                        if players:
+                            result[clean_name] = players
+                            logger.debug(f"✅ {clean_name}: +{len(players)} игроков")
                         else:
-                            logger.debug(f"⚠️ Кнопка {srv['id']} не найдена")
+                            logger.debug(f"⚪ {clean_name}: пусто или не загрузилось")
 
+                        await page.wait_for_timeout(200)
                     except Exception as e:
-                        logger.error(f"❌ Ошибка с сервером {srv['id']}: {e}")
+                        logger.debug(f"⚠️ Ошибка вкладки {raw_name}: {e}")
                         continue
 
+                await browser.close()
                 self._cache["data"] = result
                 self._cache["timestamp"] = time.time()
                 return result
 
             except Exception as e:
-                logger.error(f"❌ Глобальная ошибка парсинга: {e}")
+                logger.error(f"❌ Ошибка парсинга: {type(e).__name__}: {e}")
                 return {}
             finally:
                 try:
@@ -93,34 +97,81 @@ class KrestGGParser:
                 except:
                     pass
 
-    async def _extract_pet_players(self, page) -> List[str]:
-        """Парсит ники с тегом [PET] через Playwright локаторы"""
-        players = set()
-        try:
-            # Находим все видимые элементы, содержащие тег [PET
-            elements = await page.get_by_text(re.compile(r"\[PET[sStTpP]?\]", re.IGNORECASE)).all()
+    async def _find_server_tabs(self, page) -> List:
+        """Находит кликабельные вкладки серверов в шапке"""
+        # Паттерн ищет текст [RU][...] Кресты
+        pattern = re.compile(r"\[RU\]\[[\w+]+\]\s*Кресты")
 
-            for el in elements:
-                try:
-                    text = await el.text_content()
-                    if not text: continue
+        # Ищем только в интерактивных элементах
+        candidates = await page.locator("div, button, span, a").filter(has_text=pattern).all()
 
-                    # Извлекаем имя: [PET...] Имя (до "В друзья" или конца строки)
-                    # (.+?) ленивый захват имени
-                    match = re.search(r"\[PET[sStTpP]?\]\s*(.+?)(?:В\s*друзья|$)", text, re.IGNORECASE | re.DOTALL)
-                    if match:
-                        nick = match.group(1).strip()
-                        # Чистим от HTML тегов если попали
-                        nick = re.sub(r'<[^>]+>', '', nick).strip()
+        valid_tabs = []
+        seen_texts = set()
 
-                        if 3 <= len(nick) <= 25:
-                            players.add(nick)
-                except:
+        for el in candidates:
+            try:
+                box = await el.bounding_box()
+                if not box or box.get('y', 999) > 150:  # Фильтр по высоте (верхняя панель)
                     continue
+
+                text = await el.inner_text()
+                clean = re.sub(r'\s*\d+\s*/\s*\d+\(?\+?\d*\)?', '', text).strip()
+
+                # Точное совпадение с паттерном сервера
+                if not re.fullmatch(r"\[RU\]\[[\w+]+\]\s*Кресты", clean):
+                    continue
+
+                # Дедупликация по тексту (чтобы не парсить один сервер дважды)
+                if clean in seen_texts:
+                    continue
+                seen_texts.add(clean)
+
+                valid_tabs.append((box['x'], el, clean))
+            except Exception:
+                continue
+
+        # Сортируем слева направо
+        valid_tabs.sort(key=lambda x: x[0])
+        return [(el, txt) for _, el, txt in valid_tabs[:6]]
+
+    async def _extract_pet_players(self, page) -> List[str]:
+        """Ищет ники с тегом [PET...] или |PET...|"""
+        js_code = """
+        () => {
+            const results = new Set();
+            // ✅ ОБНОВЛЕНО: Ищет и [PET], и |PET|
+            const tagRegex = /(\[PET[sStTpP]?\]|\|PET[sStTpP]?\|)/i;
+            // ✅ ОБНОВЛЕНО: Захватывает тег и следующее за ним имя
+            const nameRegex = /((?:\[PET[sStTpP]?\]|\|PET[sStTpP]?\|)\s*[A-Za-z0-9А-Яа-я_\-\.!?]{2,20})/i;
+
+            const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+            let node;
+            while (node = walker.nextNode()) {
+                const text = node.textContent.trim();
+                if (!text || text.length > 60) continue;
+
+                if (tagRegex.test(text)) {
+                    const match = text.match(nameRegex);
+                    if (match) {
+                        let nick = match[1].trim();
+                        // Чистим прилипшую кнопку "В друзья"
+                        nick = nick.replace(/В\s*друзья/gi, '').trim();
+                        if (nick.length >= 5 && nick.length <= 25 && !results.has(nick)) {
+                            results.add(nick);
+                        }
+                    }
+                }
+            }
+            return Array.from(results);
+        }
+        """
+        try:
+            nicks = await page.evaluate(js_code)
+            return [str(n).strip() for n in nicks if n]
         except Exception as e:
-            logger.debug(f"Ошибка парсинга игроков: {e}")
+            logger.debug(f"⚠️ Ошибка JS-извлечения: {e}")
+            return []
 
-        return list(players)
 
-
+# Глобальный экземпляр
 parser = KrestGGParser()
