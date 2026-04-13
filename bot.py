@@ -470,6 +470,9 @@ class ActionState(StatesGroup):
     clip_link_waiting_url = State()     # 🔥 Ожидание ссылки
     clip_link_waiting_desc = State()    # 🔥 Ожидание описания для ссылки
 
+    waiting_court_time = State()      # 🆕 Время суда
+    waiting_court_reason = State()    # 🆕 Причина вызова
+
 # =========================
 # START / CANCEL / BACK
 # =========================
@@ -2120,7 +2123,7 @@ async def member_selected(callback: types.CallbackQuery, state: FSMContext):
                 InlineKeyboardButton("👏 История похвал", callback_data=f"view_member_praises_{member[:40]}")
             )
             kb.add(InlineKeyboardButton("⚠ Пред", callback_data="action_pred"))
-
+            kb.add(InlineKeyboardButton("🔔 Вызвать в суд", callback_data="action_court"))  # 🆕
         if info:
             emoji = "✅ " if info['desirable'] == "желателен" else "❌ "
             safe_nick = html_lib.escape(info['nick'])
@@ -2207,6 +2210,21 @@ async def view_member_praises(callback: types.CallbackQuery):
 async def action_selected(callback: types.CallbackQuery, state: FSMContext):
     try:
         action = callback.data.replace("action_", "")
+
+        # 🆕 Логика для вызова в суд
+        if action == "court":
+            await ActionState.waiting_court_time.set()
+            await callback.message.answer(
+                "🔔 <b>Вызов в суд</b>\n\n"
+                "📅 Введите дату и время проведения:\n"
+                "Формат: <code>ДД.ММ.ГГГГ ЧЧ:ММ</code>\n"
+                "Пример: <code>20.04.2026 20:00</code>\n\n"
+                "🔙 /cancel для отмены",
+                parse_mode="HTML"
+            )
+            await callback.answer()
+            return
+
         await state.update_data(action=action)
         await ActionState.waiting_reason.set()
         await callback.message.answer("📝 Опиши причину (или /cancel):" if action == "complaint" else "📝 Напиши причину (или /cancel):")
@@ -2372,7 +2390,80 @@ async def process_proof(message: types.Message, state: FSMContext):
         await state.finish()
     except Exception as e:
         logging.error(f"❌ process_proof: {e}")
+# =========================
+# вызов в суд
+# =========================
+@dp.message_handler(state=ActionState.waiting_court_time)
+async def process_court_time(message: types.Message, state: FSMContext):
+    import re
+    time_str = message.text.strip()
+    if not re.match(r'^\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}$', time_str):
+        await message.answer("❌ Неверный формат. Используйте: ДД.ММ.ГГГГ ЧЧ:ММ")
+        return
 
+    await state.update_data(court_time=time_str)
+    await ActionState.waiting_court_reason.set()
+    await message.answer("📝 Укажите причину вызова в суд:")
+@dp.message_handler(state=ActionState.waiting_court_reason)
+async def process_court_reason(message: types.Message, state: FSMContext):
+    try:
+        data = await state.get_data()
+        member = data.get("member")
+        time_str = data.get("court_time")
+        reason = message.text.strip()
+        admin_info = f"{message.from_user.full_name} (@{message.from_user.username or 'admin'})"
+
+        # Получаем TG ID игрока по нику
+        info = get_member_info(member)
+        tg_id = info.get('tg_id', '').strip() if info else None
+
+        # Ссылка на Discord (берётся из .env)
+        discord_link = os.getenv("DISCORD_LINK")
+
+        # 📩 Сообщение для игрока
+        player_text = (
+            f"🔔 <b>ВЫЗОВ В СУД КЛАНА [PET]</b>\n\n"
+            f"👤 Обвиняемый: <code>{member}</code>\n"
+            f"⚖️ Причина: {reason}\n"
+            f"📅 Дата и время: <code>{time_str}</code>\n"
+            f"📍 Место: Discord клана\n\n"
+            f"⚠️ Явка обязательна! Игнорирование повлечёт санкции.\n"
+            f"🔗 Ссылка: {discord_link}"
+        )
+
+        # Отправка игроку
+        if tg_id and tg_id.isdigit():
+            try:
+                await bot.send_message(int(tg_id), player_text, parse_mode="HTML")
+            except Exception as e:
+                logging.warning(f"⚠️ Не удалось отправить вызов {member}: {e}")
+
+        # 🔔 Уведомление всем админам
+        admin_notify = f"✅ <b>{member}</b> вызван в суд.\n🕒 {time_str}\n📝 {reason}\n🛡 Инициатор: {admin_info}"
+        for admin_id in ADMINS:
+            try:
+                await bot.send_message(admin_id, admin_notify, parse_mode="HTML")
+            except: pass
+
+        # 📝 ЛОГГИРОВАНИЕ В ТАБЛИЦУ "логи"
+        append_log("ВЫЗОВ_В_СУД", message.from_user.full_name, message.from_user.id, f"{member} | {time_str}")
+
+        # Возврат в главное меню
+        existing_nick = find_member_by_tg_id(message.from_user.id)
+        apps = get_applications(status="ожидает")
+        has_pending = any(app[4] == str(message.from_user.id) for app in apps)
+
+        await message.answer(
+            f"✅ <b>{member}</b> успешно вызван в суд!\n📅 Время: <code>{time_str}</code>\n📜 Запись добавлена в логи.",
+            reply_markup=main_menu(message.from_user.id, is_registered=(existing_nick is not None), has_pending_app=has_pending),
+            parse_mode="HTML"
+        )
+        await state.finish()
+
+    except Exception as e:
+        logging.error(f"❌ process_court_reason: {e}", exc_info=True)
+        await message.answer("❌ Произошла ошибка при оформлении вызова.")
+        await state.finish()
 # =========================
 # 🎖 РАЗРЯДЫ
 # =========================
