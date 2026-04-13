@@ -427,6 +427,7 @@ def main_menu(user_id, is_registered=False, has_pending_app=False):
         keyboard.add(InlineKeyboardButton("⚖ Жалобы", callback_data="complaints"))
         keyboard.add(InlineKeyboardButton("👤 Мой профиль", callback_data="my_profile"))
         keyboard.add(InlineKeyboardButton("🎬 Отправить клип", callback_data="submit_clip"))
+        keyboard.add(InlineKeyboardButton( "🎫 Написать администрации ", callback_data= "ticket_create "))
         # 🆕 КНОПКА MINI APP
         keyboard.add(InlineKeyboardButton(
             "📱 Mini App",
@@ -469,7 +470,7 @@ class ActionState(StatesGroup):
     clip_waiting_desc = State()         # Ожидание описания для файла
     clip_link_waiting_url = State()     # 🔥 Ожидание ссылки
     clip_link_waiting_desc = State()    # 🔥 Ожидание описания для ссылки
-
+    waiting_user_msg = State()
     waiting_court_time = State()      # 🆕 Время суда
     waiting_court_reason = State()    # 🆕 Причина вызова
 
@@ -3123,6 +3124,9 @@ async def complaint_actions(callback: types.CallbackQuery):
         await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
     except Exception as e:
         logging.error(f"❌ complaint_actions: {e}")
+
+
+
 # =========================
 # 🛠 ВРЕМЕННЫЕ КОМАНДЫ (можно удалить после настройки)
 # =========================
@@ -3237,9 +3241,98 @@ async def get_chat_id(message: types.Message):
 #     logging.info(f"📝 JDM-ответ изменён админом {message.from_user.full_name}")
 
 
+== == == == == == == == == == == == =
+🎫 ТИКЕТЫ
+ЧЕРЕЗ
+ГРУППУ
+МОДЕРАТОРОВ
+== == == == == == == == == == == == =
+
+@dp.callback_query_handler(lambda c: c.data == "ticket_create")
+async def ticket_create(callback: types.CallbackQuery, state: FSMContext):
+    current_state = await state.get_state()
+    if current_state is not None:
+        await callback.answer("⚠️ Завершите текущее действие сначала", show_alert=True)
+        return
+
+    await TicketState.waiting_user_msg.set()
+    await callback.message.edit_text(
+        "✉️ <b>Написать администрации</b>\n\n"
+        "Введите ваше обращение или вопрос.\n"
+        "Сообщение будет отправлено в группу модераторов.\n\n"
+        "🔙 /cancel для отмены",
+        parse_mode="HTML"
+    )
+    await callback.answer()
 
 
+@dp.message_handler(state=TicketState.waiting_user_msg)
+async def process_ticket_message(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name
+    ticket_text = message.text.strip()
 
+    if len(ticket_text) < 3:
+        await message.answer("❌ Сообщение слишком короткое. Опишите вопрос подробнее.")
+        return
+
+    # Формируем сообщение для группы модераторов. ID зашит в HTML-тег для парсинга
+    mod_text = (
+        f"🎫 <b>Новый запрос</b>\n"
+        f"👤 От: {username}\n"
+        f"🆔 ID: <code>{user_id}</code>\n\n"
+        f"📝 {html_lib.escape(ticket_text)}"
+    )
+
+    try:
+        if MODS_CHAT_ID != 0:
+            await bot.send_message(MODS_CHAT_ID, mod_text, parse_mode="HTML")
+        else:
+            # Фоллбэк: если группа не указана, отправляем всем админам в ЛС
+            for admin_id in ADMINS:
+                await bot.send_message(admin_id, mod_text, parse_mode="HTML")
+    except Exception as e:
+        logging.error(f"❌ Ошибка отправки тикета: {e}")
+
+    append_log("ТИКЕТ_СОЗДАН", username, user_id, ticket_text[:50])
+
+    await message.answer("✅ Ваше обращение отправлено модераторам!\nОжидайте ответа в личных сообщениях.")
+    await state.finish()
+
+
+@dp.message_handler(
+    lambda msg: msg.chat.id == MODS_CHAT_ID and msg.reply_to_message is not None and "🆔 ID:" in (
+            msg.reply_to_message.text or "")
+)
+async def handle_mod_reply(message: types.Message):
+    try:
+        reply_text = message.reply_to_message.text
+        # Извлекаем ID участника из скрытого тега
+        import re
+        match = re.search(r"🆔 ID: <code>(\d+)</code>", reply_text)
+        if not match:
+            return
+
+        target_user_id = int(match.group(1))
+        mod_nick = html_lib.escape(message.from_user.full_name)
+        answer_text = html_lib.escape(message.text)
+
+        # Формируем ответ в нужном формате
+        user_reply = f"🛡 <b>Модератор {mod_nick} ответил на ваш запрос:</b>\n\n{answer_text}"
+
+        try:
+            await bot.send_message(target_user_id, user_reply, parse_mode="HTML")
+        except Exception as e:
+            await message.answer(
+                f"❌ Не удалось доставить ответ. Возможно, пользователь заблокировал бота.\nОшибка: {e}")
+            return
+
+        append_log("ТИКЕТ_ОТВЕТ", f"{message.from_user.full_name}", message.from_user.id,
+                   f"Пользователю ID: {target_user_id}")
+        await message.answer("✅ Ответ успешно доставлен участнику!")
+
+    except Exception as e:
+        logging.error(f"❌ Ошибка обработки ответа модератора: {e}", exc_info=True)
 
 async def scheduled_report_job():
     """Еженедельный отчёт"""
