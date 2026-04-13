@@ -3241,13 +3241,14 @@ async def get_chat_id(message: types.Message):
 #     logging.info(f"📝 JDM-ответ изменён админом {message.from_user.full_name}")
 
 
-== == == == == == == == == == == == =
-🎫 ТИКЕТЫ
-ЧЕРЕЗ
-ГРУППУ
-МОДЕРАТОРОВ
-== == == == == == == == == == == == =
+#== == == == == == == == == == == == =
+#🎫 ТИКЕТЫ
+#ЧЕРЕЗ
+#ГРУППУ
+#МОДЕРАТОРОВ
+#== == == == == == == == == == == == =
 
+MODS_CHAT_ID = int(os.getenv("MODS_CHAT_ID"))
 @dp.callback_query_handler(lambda c: c.data == "ticket_create")
 async def ticket_create(callback: types.CallbackQuery, state: FSMContext):
     current_state = await state.get_state()
