@@ -3268,38 +3268,62 @@ async def ticket_create(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+@dp.callback_query_handler(lambda c: c.data == "ticket_create")
+async def ticket_create(callback: types.CallbackQuery, state: FSMContext):
+    try:
+        current_state = await state.get_state()
+        if current_state is not None:
+            await callback.answer("⚠️ Завершите текущее действие сначала", show_alert=True)
+            return
+
+        await TicketState.waiting_user_msg.set()
+        text = (
+            "✉️ <b>Написать администрации</b>\n\n"
+            "Введите ваше обращение или вопрос.\n"
+            "Сообщение будет отправлено модераторам.\n\n"
+            "🔙 /cancel для отмены"
+        )
+        try:
+            await callback.message.edit_text(text, parse_mode="HTML")
+        except:
+            await callback.message.answer(text, parse_mode="HTML")
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"❌ ticket_create: {e}")
+        await callback.answer("❌ Ошибка открытия формы", show_alert=True)
+
+
 @dp.message_handler(state=TicketState.waiting_user_msg)
 async def process_ticket_message(message: types.Message, state: FSMContext):
-    user_id = message.from_user.id
-    username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name
-    ticket_text = message.text.strip()
-
-    if len(ticket_text) < 3:
-        await message.answer("❌ Сообщение слишком короткое. Опишите вопрос подробнее.")
-        return
-
-    # Формируем сообщение для группы модераторов. ID зашит в HTML-тег для парсинга
-    mod_text = (
-        f"🎫 <b>Новый запрос</b>\n"
-        f"👤 От: {username}\n"
-        f"🆔 ID: <code>{user_id}</code>\n\n"
-        f"📝 {html_lib.escape(ticket_text)}"
-    )
-
     try:
-        if MODS_CHAT_ID != 0:
+        user_id = message.from_user.id
+        username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name
+        ticket_text = message.text.strip()
+
+        if len(ticket_text) < 3:
+            await message.answer("❌ Сообщение слишком короткое. Опишите вопрос подробнее.")
+            return
+
+        mod_text = (
+            f"🎫 <b>Новый запрос</b>\n"
+            f"👤 От: {username}\n"
+            f"🆔 ID: <code>{user_id}</code>\n\n"
+            f"📝 {html_lib.escape(ticket_text)}"
+        )
+
+        # Отправляем в группу модеров или админам в ЛС
+        if MODS_CHAT_ID and MODS_CHAT_ID != 0:
             await bot.send_message(MODS_CHAT_ID, mod_text, parse_mode="HTML")
         else:
-            # Фоллбэк: если группа не указана, отправляем всем админам в ЛС
             for admin_id in ADMINS:
                 await bot.send_message(admin_id, mod_text, parse_mode="HTML")
+
+        append_log("ТИКЕТ_СОЗДАН", username, user_id, ticket_text[:50])
+        await message.answer("✅ Ваше обращение отправлено!\nОжидайте ответа в ЛС.")
+        await state.finish()
     except Exception as e:
-        logging.error(f"❌ Ошибка отправки тикета: {e}")
-
-    append_log("ТИКЕТ_СОЗДАН", username, user_id, ticket_text[:50])
-
-    await message.answer("✅ Ваше обращение отправлено модераторам!\nОжидайте ответа в личных сообщениях.")
-    await state.finish()
+        logging.error(f"❌ process_ticket_message: {e}")
+        await message.answer("❌ Произошла ошибка при отправке.")
 
 
 @dp.message_handler(
@@ -3309,7 +3333,6 @@ async def process_ticket_message(message: types.Message, state: FSMContext):
 async def handle_mod_reply(message: types.Message):
     try:
         reply_text = message.reply_to_message.text
-        # Извлекаем ID участника из скрытого тега
         import re
         match = re.search(r"🆔 ID: <code>(\d+)</code>", reply_text)
         if not match:
@@ -3319,22 +3342,17 @@ async def handle_mod_reply(message: types.Message):
         mod_nick = html_lib.escape(message.from_user.full_name)
         answer_text = html_lib.escape(message.text)
 
-        # Формируем ответ в нужном формате
         user_reply = f"🛡 <b>Модератор {mod_nick} ответил на ваш запрос:</b>\n\n{answer_text}"
 
         try:
             await bot.send_message(target_user_id, user_reply, parse_mode="HTML")
+            await message.answer("✅ Ответ доставлен участнику!")
         except Exception as e:
-            await message.answer(
-                f"❌ Не удалось доставить ответ. Возможно, пользователь заблокировал бота.\nОшибка: {e}")
-            return
+            await message.answer(f"❌ Не удалось доставить ответ. Пользователь заблокировал бота или удалил чат.")
 
-        append_log("ТИКЕТ_ОТВЕТ", f"{message.from_user.full_name}", message.from_user.id,
-                   f"Пользователю ID: {target_user_id}")
-        await message.answer("✅ Ответ успешно доставлен участнику!")
-
+        append_log("ТИКЕТ_ОТВЕТ", message.from_user.full_name, message.from_user.id, f"ID: {target_user_id}")
     except Exception as e:
-        logging.error(f"❌ Ошибка обработки ответа модератора: {e}", exc_info=True)
+        logging.error(f"❌ handle_mod_reply: {e}")
 
 async def scheduled_report_job():
     """Еженедельный отчёт"""
