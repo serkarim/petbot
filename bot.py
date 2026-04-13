@@ -473,7 +473,8 @@ class ActionState(StatesGroup):
     waiting_user_msg = State()
     waiting_court_time = State()      # 🆕 Время суда
     waiting_court_reason = State()    # 🆕 Причина вызова
-
+class TicketState(StatesGroup):
+    waiting_user_msg = State()
 # =========================
 # START / CANCEL / BACK
 # =========================
