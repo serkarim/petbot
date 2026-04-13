@@ -3332,28 +3332,42 @@ async def process_ticket_message(message: types.Message, state: FSMContext):
 )
 async def handle_mod_reply(message: types.Message):
     try:
-        reply_text = message.reply_to_message.text
-        import re
-        match = re.search(r"🆔 ID: <code>(\d+)</code>", reply_text)
-        if not match:
+        # Текст оригинального тикета
+        original_text = message.reply_to_message.text
+
+        # Текст ответа модератора (или подпись к фото/документу)
+        admin_reply = message.text or message.caption or ""
+
+        if not admin_reply.strip():
+            await message.answer("⚠️ Напиши текст ответа или добавь подпись к вложению.")
             return
+
+        # 🔍 Ищем ID. Теперь ловит: 🆔 ID: 123456, 🆔 ID: <code>123456</code> или 🆔 ID: `123456`
+        import re
+        match = re.search(r"🆔 ID:.*?(\d{5,})", original_text)
+
+        if not match:
+            return  # ID не найден в тексте тикета
 
         target_user_id = int(match.group(1))
         mod_nick = html_lib.escape(message.from_user.full_name)
-        answer_text = html_lib.escape(message.text)
+        safe_reply = html_lib.escape(admin_reply)
 
-        user_reply = f"🛡 <b>Модератор {mod_nick} ответил на ваш запрос:</b>\n\n{answer_text}"
+        user_msg = f"🛡 <b>Модератор {mod_nick} ответил на ваш запрос:</b>\n\n{safe_reply}"
 
         try:
-            await bot.send_message(target_user_id, user_reply, parse_mode="HTML")
-            await message.answer("✅ Ответ доставлен участнику!")
+            await bot.send_message(target_user_id, user_msg, parse_mode="HTML")
+            await message.answer("✅ Ответ успешно доставлен участнику!")
         except Exception as e:
-            await message.answer(f"❌ Не удалось доставить ответ. Пользователь заблокировал бота или удалил чат.")
+            await message.answer(
+                f"❌ Не удалось доставить ответ. Пользователь, скорее всего, заблокировал бота или удалил аккаунт.")
+            return
 
         append_log("ТИКЕТ_ОТВЕТ", message.from_user.full_name, message.from_user.id, f"ID: {target_user_id}")
-    except Exception as e:
-        logging.error(f"❌ handle_mod_reply: {e}")
 
+    except Exception as e:
+        logging.error(f"❌ handle_mod_reply: {e}", exc_info=True)
+        await message.answer("❌ Внутренняя ошибка при обработке ответа.")
 async def scheduled_report_job():
     """Еженедельный отчёт"""
     try:
