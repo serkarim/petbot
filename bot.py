@@ -1547,7 +1547,7 @@ async def cmd_pet_online(message: types.Message):
                     lines.append("  • " + nick_str)
             lines.append("")  # пустая строка между серверами
 
-        lines.append(f"📊 <i>Всего онлайн: {total} | Обновлено: {datetime.now().strftime('%H:%M:%S')}</i>")
+        lines.append(f"📊 <i>Всего онлайн: {total} | Обновлено: {get_msk_time().strftime('%H:%M:%S')}</i>")
 
         # Отправляем сообщение (если текст слишком длинный — разбиваем)
         full_text = "\n".join(lines)
