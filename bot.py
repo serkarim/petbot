@@ -169,16 +169,23 @@ def get_applications_sheet():
     try:
         return sheet.worksheet("Заявки на вступление")
     except:
-        ws = sheet.add_worksheet("Заявки на вступление", rows=100, cols=7)
-        ws.append_row(["ID", "Никнейм", "Steam ID", "TG Username", "TG ID", "Дата", "Статус"])
+        ws = sheet.add_worksheet("Заявки на вступление", rows=100, cols=12)
+        ws.append_row([
+            "ID", "Никнейм", "Steam ID", "TG Username", "TG ID",
+            "Дата", "Статус", "Возраст", "Прайм-тайм", "Роль", "Другие игры", "О себе"
+        ])
         return ws
 
-def add_application(nickname, steam_id, tg_username, tg_id):
+def add_application(nickname, steam_id, tg_username, tg_id, age, prime_time, preferred_role, other_games, about_me):
     ws = get_applications_sheet()
     rows = ws.get_all_values()
     new_id = str(max([int(r[0]) for r in rows[1:] if r[0].isdigit()], default=0) + 1)
     date = get_msk_time().strftime("%d.%m.%Y %H:%M")
-    ws.append_row([new_id, nickname, steam_id, tg_username, str(tg_id), date, "ожидает"])
+    # Порядок совпадает с заголовком выше
+    ws.append_row([
+        new_id, nickname, steam_id, tg_username, str(tg_id),
+        date, "ожидает", age, prime_time, preferred_role, other_games, about_me
+    ])
     return new_id
 
 def get_applications(status=None):
@@ -473,6 +480,14 @@ class ActionState(StatesGroup):
     waiting_user_msg = State()
     waiting_court_time = State()      # 🆕 Время суда
     waiting_court_reason = State()    # 🆕 Причина вызова
+    reg_age = State()
+    reg_prime_time = State()
+    reg_preferred_role = State()
+    reg_other_games = State()
+    reg_about_me = State()
+    reg_confirm = State()
+    reg_select_existing = State()
+    reg_existing_confirm = State()
 class TicketState(StatesGroup):
     waiting_user_msg = State()
 # =========================
@@ -1163,9 +1178,9 @@ async def reg_type_new(callback: types.CallbackQuery, state: FSMContext):
             "2️⃣ Запрет на читы\n"
             "3️⃣ Активность в клане\n"
             "4️⃣ Выполнение приказов\n"
-            "5️⃣ Конфиденциальность\n\n"
+            "5️⃣ Хороший онлайн\n\n"
             "⚠️ Нарушение = предупреждение или кик!\n"
-            "Полный список правил: https://telegra.ph/Pravila-klana-03-01-3 Просьба внимательно ознакомиться! Дабы потом не задавть лищние вопросы\n"
+            "Полный список правил: https://telegra.ph/Pravila-klana-03-01-3 Просьба внимательно ознакомиться! Дабы потом не задавать лишние вопросы\n"
             "Согласны?",
             reply_markup=keyboard
         )
@@ -1215,38 +1230,79 @@ async def reg_save_steam_nick(message: types.Message, state: FSMContext):
     except Exception as e:
         logging.error(f"❌ reg_save_steam_nick: {e}", exc_info=True)
 
+
 @dp.message_handler(state=ActionState.reg_steam_id)
 async def reg_save_steam_id(message: types.Message, state: FSMContext):
     try:
         steam_id = message.text.strip()
-
         if not steam_id.isdigit() or len(steam_id) < 17:
             await message.answer("❌ Неверный формат Steam ID. Попробуйте ещё раз:")
             return
-
         await state.update_data(steam_id=steam_id)
-        await ActionState.reg_confirm.set()
-
-        data = await state.get_data()
-
-        keyboard = InlineKeyboardMarkup(row_width=1)
-        keyboard.add(
-            InlineKeyboardButton("✅ Подтвердить заявку", callback_data="app_submit"),
-            InlineKeyboardButton("❌ Изменить", callback_data="reg_type_new")
-        )
-
-        await message.answer(
-            f"📋 Проверьте данные:\n"
-            f"🎮 Ник: <code>{data['steam_nick']}</code>\n"
-            f"🆔 Steam ID: <code>{steam_id}</code>\n"
-            f"👤 TG: <code>{message.from_user.full_name}</code>\n\n"
-            f"Всё верно?",
-            reply_markup=keyboard,
-            parse_mode="HTML"
-        )
-
+        await ActionState.reg_age.set()
+        await message.answer("🎂 Введите ваш возраст (число):")
     except Exception as e:
-        logging.error(f"❌ reg_save_steam_id: {e}", exc_info=True)
+        logging.error(f"❌ reg_save_steam_id: {e}")
+
+
+# 🔽 НОВЫЕ ХЕНДЛЕРЫ РЕГИСТРАЦИИ
+@dp.message_handler(state=ActionState.reg_age)
+async def reg_save_age(message: types.Message, state: FSMContext):
+    try:
+        if not message.text.isdigit() or not (12 <= int(message.text) <= 65):
+            await message.answer("❌ Введите корректный возраст (от 12 до 65):")
+            return
+        await state.update_data(age=message.text)
+        await ActionState.reg_prime_time.set()
+        await message.answer("⏰ Укажите ваше прайм-тайм (например: 19:00-23:00 МСК):")
+    except:
+        await message.answer("❌ Ошибка формата. Введите возраст числом.")
+
+
+@dp.message_handler(state=ActionState.reg_prime_time)
+async def reg_save_prime(message: types.Message, state: FSMContext):
+    await state.update_data(prime_time=message.text.strip())
+    await ActionState.reg_preferred_role.set()
+    await message.answer("🎖 Укажите предпочитаемую роль (штурмовик, медик, пулемётчик, командир и т.д.):")
+
+
+@dp.message_handler(state=ActionState.reg_preferred_role)
+async def reg_save_role(message: types.Message, state: FSMContext):
+    await state.update_data(preferred_role=message.text.strip())
+    await ActionState.reg_other_games.set()
+    await message.answer("🎮 В какие ещё игры играете, кроме Squad?")
+
+
+@dp.message_handler(state=ActionState.reg_other_games)
+async def reg_save_games(message: types.Message, state: FSMContext):
+    await state.update_data(other_games=message.text.strip())
+    await ActionState.reg_about_me.set()
+    await message.answer("📝 Напишите немного о себе (опыт, стиль игры, цели в клане):")
+
+
+@dp.message_handler(state=ActionState.reg_about_me)
+async def reg_save_about(message: types.Message, state: FSMContext):
+    await state.update_data(about_me=message.text.strip())
+    await ActionState.reg_confirm.set()
+
+    data = await state.get_data()
+    kb = InlineKeyboardMarkup(row_width=1)
+    kb.add(InlineKeyboardButton("✅ Подтвердить заявку", callback_data="app_submit"),
+           InlineKeyboardButton("❌ Изменить", callback_data="reg_type_new"))
+
+    await message.answer(
+        f"📋 <b>Проверьте данные:</b>\n"
+        f"🎮 Ник: <code>{data['steam_nick']}</code>\n"
+        f"🆔 Steam ID: <code>{data['steam_id']}</code>\n"
+        f"🎂 Возраст: {data['age']} | ⏰ Прайм: {data['prime_time']}\n"
+        f"🎖 Роль: {data['preferred_role']}\n"
+        f"🎮 Другие игры: {data['other_games']}\n"
+        f"📝 О себе: {data['about_me']}\n"
+        f"👤 TG: <code>{message.from_user.full_name}</code>\n\n"
+        f"Всё верно?",
+        reply_markup=kb, parse_mode="HTML"
+    )
+
 
 @dp.callback_query_handler(
     lambda c: c.data == "app_submit",
@@ -1255,17 +1311,23 @@ async def reg_save_steam_id(message: types.Message, state: FSMContext):
 async def app_submit(callback: types.CallbackQuery, state: FSMContext):
     try:
         data = await state.get_data()
-
         steam_nick = data.get("steam_nick")
         steam_id = data.get("steam_id")
         tg_username = data.get("tg_username")
         tg_id = data.get("tg_id")
 
+        age = data.get("age")
+        prime_time = data.get("prime_time")
+        preferred_role = data.get("preferred_role")
+        other_games = data.get("other_games")
+        about_me = data.get("about_me")
+
         if not all([steam_nick, steam_id, tg_id]):
             await callback.answer("❌ Ошибка данных", show_alert=True)
             return
 
-        app_id = add_application(steam_nick, steam_id, tg_username, tg_id)
+        app_id = add_application(steam_nick, steam_id, tg_username, tg_id,
+                                 age, prime_time, preferred_role, other_games, about_me)
         append_log("ЗАЯВКА_НА_ВСТУПЛЕНИЕ", tg_username, tg_id, steam_nick)
 
         await state.finish()
@@ -1273,10 +1335,8 @@ async def app_submit(callback: types.CallbackQuery, state: FSMContext):
         for admin_id in ADMINS:
             try:
                 kb = InlineKeyboardMarkup(row_width=2)
-                kb.add(
-                    InlineKeyboardButton("✅ Принять", callback_data=f"app_accept_{app_id}"),
-                    InlineKeyboardButton("❌ Отклонить", callback_data=f"app_reject_{app_id}")
-                )
+                kb.add(InlineKeyboardButton("✅ Принять", callback_data=f"app_accept_{app_id}"),
+                       InlineKeyboardButton("❌ Отклонить", callback_data=f"app_reject_{app_id}"))
 
                 await bot.send_message(
                     admin_id,
@@ -1284,29 +1344,25 @@ async def app_submit(callback: types.CallbackQuery, state: FSMContext):
                     f"🆔 #{app_id}\n"
                     f"🎮 <code>{steam_nick}</code>\n"
                     f"🆔 <code>{steam_id}</code>\n"
+                    f"🎂 {age} лет | ⏰ {prime_time}\n"
+                    f"🎖 Роль: {preferred_role}\n"
+                    f"🎮 Игры: {other_games}\n"
+                    f"📝 О себе: {about_me}\n"
                     f"👤 {tg_username}\n"
                     f"🆔 <code>{tg_id}</code>",
-                    reply_markup=kb,
-                    parse_mode="HTML"
+                    reply_markup=kb, parse_mode="HTML"
                 )
-
             except Exception as e:
                 logging.error(f"❌ Ошибка уведомления админа: {e}")
 
         await callback.message.edit_text(
-            f"✅ Заявка отправлена!\n"
-            f"📋 ID: <code>#{app_id}</code>\n"
-            f"Ожидайте решения модераторов!",
-            reply_markup=main_menu(tg_id, has_pending_app=True),
-            parse_mode="HTML"
+            f"✅ Заявка отправлена!\n📋 ID: <code>#{app_id}</code>\nОжидайте решения модераторов!",
+            reply_markup=main_menu(tg_id, has_pending_app=True), parse_mode="HTML"
         )
-
         await callback.answer()
-
     except Exception as e:
         logging.error(f"❌ app_submit: {e}", exc_info=True)
         await callback.answer("❌ Ошибка отправки", show_alert=True)
-
 @dp.callback_query_handler(lambda c: c.data == "reg_type_existing", state="*")
 async def reg_type_existing(callback: types.CallbackQuery, state: FSMContext):
     try:
