@@ -3524,22 +3524,22 @@ async def on_startup(_):
         logging.info("⏰ Задача 'weekly_report' добавлена")
 
         # Проверка девлогов: каждые 30 секунд
-        scheduler.add_job(
-            check_new_devlogs,
-            trigger=CronTrigger(second="*/30", timezone=pytz.timezone("Europe/Moscow")),
-            id="check_devlogs",
-            replace_existing=True
-        )
-        logging.info("⏰ Задача 'check_devlogs' добавлена")
+        # scheduler.add_job(
+        #     check_new_devlogs,
+        #     trigger=CronTrigger(second="*/30", timezone=pytz.timezone("Europe/Moscow")),
+        #     id="check_devlogs",
+        #     replace_existing=True
+        # )
+        # logging.info("⏰ Задача 'check_devlogs' добавлена")
 
         # Проверка оповещений: каждые 2 минуты
-        scheduler.add_job(
-            process_scheduled_notifications,
-            trigger=CronTrigger(minute="*/2", timezone=pytz.timezone("Europe/Moscow")),
-            id="check_notifications",
-            replace_existing=True
-        )
-        logging.info("⏰ Задача 'check_notifications' добавлена")
+        # scheduler.add_job(
+        #     process_scheduled_notifications,
+        #     trigger=CronTrigger(minute="*/2", timezone=pytz.timezone("Europe/Moscow")),
+        #     id="check_notifications",
+        #     replace_existing=True
+        # )
+        # logging.info("⏰ Задача 'check_notifications' добавлена")
 
     # 🚀 Запускаем планировщик
     scheduler.start()
