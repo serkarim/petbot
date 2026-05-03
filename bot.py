@@ -1873,7 +1873,7 @@ async def fetch_sqstat_profile(steam_id: str) -> dict | None:
     from bs4 import BeautifulSoup
     import re
 
-    url = f"https://prot.p.sqstat.ru    /player/{steam_id}"
+    url = f"https://prot.p.sqstat.ru/player/{steam_id}"
 
     try:
         async with aiohttp.ClientSession() as session:
