@@ -1583,7 +1583,7 @@ async def cmd_pet_online(message: types.Message):
             'User-Agent': 'Mozilla/5.0'
         }
 
-        data = {'clan_id': '38', 'action': 'list'}
+        data = {'clan_id': '52', 'action': 'list'}
 
         # 🔹 Синхронный запрос (для простоты)
         resp = requests.post(api_url, headers=headers, data=data, timeout=10)
