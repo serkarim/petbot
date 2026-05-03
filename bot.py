@@ -1624,7 +1624,7 @@ async def cmd_pet_online(message: types.Message):
                 continue
             total += count
             srv_clean = server.replace("Protocol ", "").strip()
-            lines.append(f"🎮 <b>{srv_clean}</b> ({count}): ")
+            lines.append(f"🎮 <b>{server_name}</b> ({count}): ")
 
             # Чистим ники от тегов
             clean_nicks = []
@@ -1873,7 +1873,7 @@ async def fetch_sqstat_profile(steam_id: str) -> dict | None:
     from bs4 import BeautifulSoup
     import re
 
-    url = f"https://breaking.proxy.sqstat.ru/player/{steam_id}"
+    url = f"https://prot.p.sqstat.ru    /player/{steam_id}"
 
     try:
         async with aiohttp.ClientSession() as session:
