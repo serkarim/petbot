@@ -1564,65 +1564,95 @@ import traceback
 import re
 from datetime import datetime
 from krestgg_parser import parser as krest_parser
-
+import requests
 
 @dp.message_handler(commands=['pet_online', 'пет_онлайн', 'клан_онлайн'])
 async def cmd_pet_online(message: types.Message):
-    status = await message.answer("🔍 Сканирую сервера Крестов...")
+    """🔍 Парсер SQStat — inline версия"""
+    status = await message.answer("🔍 Сканирую сервера Protocol...")
 
     try:
-        # Получаем данные от парсера
-        data = await krest_parser.get_pet_online_by_server(force_refresh=True)
+        found = []
+        api_url = "https://prot.proxy.sqstat.ru/ajax/clan.php"
 
-        # 🔧 ИСПРАВЛЕНО: полная проверка на пустой результат
-        if not data or not any(data.values()):
+        headers = {
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'X-Requested-With': 'XMLHttpRequest',
+            'Origin': 'https://prot.proxy.sqstat.ru',
+            'Referer': 'https://prot.proxy.sqstat.ru/clan/38',
+            'User-Agent': 'Mozilla/5.0'
+        }
+
+        data = {'clan_id': '38', 'action': 'list'}
+
+        # 🔹 Синхронный запрос (для простоты)
+        resp = requests.post(api_url, headers=headers, data=data, timeout=10)
+        resp.encoding = 'utf-8'
+        json_data = resp.json()
+
+        servers = json_data.get('servers', {})
+
+        for server_id, players_obj in servers.items():
+            if not players_obj or isinstance(players_obj, list):
+                continue
+
+            server_name = f"Protocol #{server_id}"
+
+            for player_id, player_data in players_obj.items():
+                name = player_data.get('name', '')
+                # Фильтр по PET/РЕТ
+                if ('PET' in name.upper() or 'РЕТ' in name.upper()) and name and len(name) < 50:
+                    found.append({'server': server_name, 'nick': name})
+                    logger.debug(f"[SQStat] {server_name} → {name}")
+
+        if not found:
             await status.edit_text("🔴 Сейчас нет игроков [PET] в сети или сайт не ответил.")
             return
 
-        lines = ["🟢 <b>Клан [PET] по серверам:</b>\n"]
+        # 🔹 Группируем по серверам
+        from collections import defaultdict
+        servers_grouped = defaultdict(list)
+        for p in found:
+            servers_grouped[p['server']].append(p['nick'])
+
+        lines = ["🟢 <b>Клан [PET] по серверам Protocol:</b>\n"]
         total = 0
 
-        for server, players in data.items():
-            # Чистим название сервера: [RU][AAS+] Кресты → AAS+
-            srv_clean = re.sub(r'\[RU\]\s*', '', server, flags=re.I).strip()
-            srv_clean = re.sub(r'\s*Кресты$', '', srv_clean, flags=re.I).strip()
-
-            count = len(players)
+        for server, players_list in servers_grouped.items():
+            count = len(players_list)
             if count == 0:
                 continue
-
             total += count
-            lines.append(f"🎮 <b>{srv_clean}</b> ({count}):")
+            srv_clean = server.replace("Protocol ", "").strip()
+            lines.append(f"🎮 <b>{srv_clean}</b> ({count}): ")
 
-            # Группируем по 5 ников в строку
-            for i in range(0, count, 5):
-                chunk = players[i:i + 5]
-                # Убираем теги [PET]/[PETt]/[PETs], оставляем только ник
-                clean_nicks = [
-                    re.sub(r'\[(?:PET|PETt|PETs)\]\s*', '', p, flags=re.I).strip()
-                    for p in chunk
-                ]
-                # Форматируем: • ник1  • ник2  • ник3
-                nick_str = "  • ".join(f"<code>{n}</code>" for n in clean_nicks if n)
+            # Чистим ники от тегов
+            clean_nicks = []
+            for nick in players_list:
+                cleaned = re.sub(r'[\[\(]?[|]?\s*(?:PET|РЕТ)[sS tTpP]?\s*[|\]]?[\)]?\s*', '', nick, flags=re.I).strip()
+                if cleaned and len(cleaned) < 50:
+                    clean_nicks.append(cleaned)
+
+            # Группируем по 5 в строку
+            for i in range(0, len(clean_nicks), 5):
+                chunk = clean_nicks[i:i + 5]
+                nick_str = "  •  ".join(f"<code>{html_lib.escape(n)}</code>" for n in chunk if n)
                 if nick_str:
-                    lines.append("  • " + nick_str)
-            lines.append("")  # пустая строка между серверами
+                    lines.append("  •  " + nick_str)
+            lines.append("")
 
         lines.append(f"📊 <i>Всего онлайн: {total} | Обновлено: {get_msk_time().strftime('%H:%M:%S')}</i>")
 
-        # Отправляем сообщение (если текст слишком длинный — разбиваем)
         full_text = "\n".join(lines)
         if len(full_text) > 4096:
-            # Telegram лимит: 4096 символов на сообщение
             await status.edit_text(full_text[:4090] + "\n\n...")
         else:
             await status.edit_text(full_text, parse_mode="HTML")
 
     except Exception as e:
-        logger.error(f"❌ Ошибка /pet_online:\n{traceback.format_exc()}")
+        logger.error(f"[SQStat] Ошибка: {e}\n{traceback.format_exc()}")
         await status.edit_text(
-            "⚠️ Произошла ошибка при опросе серверов.\n"
-            "Проверь логи или попробуй позже.",
+            "⚠️ Произошла ошибка при опросе серверов.\nПроверь логи или попробуй позже.",
             parse_mode="HTML"
         )
 # =========================
