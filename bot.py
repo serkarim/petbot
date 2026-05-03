@@ -1582,6 +1582,12 @@ async def cmd_pet_online(message: types.Message):
             'Referer': 'https://prot.proxy.sqstat.ru/clan/52',
             'User-Agent': 'Mozilla/5.0'
         }
+        PROTOCOL_NAMES = {
+            '5': 'Проткол AAS/RAAS',
+            '10': 'Проткол Инвага',
+            '11': 'Проткол Супермод',
+            '12': 'Проткол ВС РФ VS ВСУ',
+        }
 
         data = {'clan_id': '52', 'action': 'list'}
 
@@ -1596,7 +1602,10 @@ async def cmd_pet_online(message: types.Message):
             if not players_obj or isinstance(players_obj, list):
                 continue
 
-            server_name = f"Protocol #{server_id}"
+            if server_id in PROTOCOL_NAMES:
+                server_name = PROTOCOL_NAMES[server_id]
+            else:
+                server_name = f"Protocol #{server_id}"
 
             for player_id, player_data in players_obj.items():
                 name = player_data.get('name', '')
@@ -1873,7 +1882,7 @@ async def fetch_sqstat_profile(steam_id: str) -> dict | None:
     from bs4 import BeautifulSoup
     import re
 
-    url = f"https://prot.p.sqstat.ru/player/{steam_id}"
+    url = f"https://breaking.proxy.sqstat.ru/player/{steam_id}"
 
     try:
         async with aiohttp.ClientSession() as session:
