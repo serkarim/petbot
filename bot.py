@@ -1579,7 +1579,7 @@ async def cmd_pet_online(message: types.Message):
             'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
             'X-Requested-With': 'XMLHttpRequest',
             'Origin': 'https://prot.proxy.sqstat.ru',
-            'Referer': 'https://prot.proxy.sqstat.ru/clan/38',
+            'Referer': 'https://prot.proxy.sqstat.ru/clan/52',
             'User-Agent': 'Mozilla/5.0'
         }
 
