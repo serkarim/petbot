@@ -1632,8 +1632,11 @@ async def cmd_pet_online(message: types.Message):
             if count == 0:
                 continue
             total += count
-            srv_clean = server.replace("Protocol ", "").strip()
-            lines.append(f"🎮 <b>{server_name}</b> ({count}): ")
+            # srv_clean не используется, можно удалить или закомментировать
+            # srv_clean = server.replace("Protocol ", "").strip()
+
+            # ✅ Используем server, а не server_name
+            lines.append(f"🎮 <b>{server}</b> ({count}): ")
 
             # Чистим ники от тегов
             clean_nicks = []
