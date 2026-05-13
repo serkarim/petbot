@@ -46,7 +46,21 @@ creds_data = json.loads(os.getenv("CREDS_JSON"))
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_data, scope)
 client = gspread.authorize(creds)
 sheet = client.open_by_key(SPREADSHEET_KEY)
-
+# ===== PAGINATION HELPER =====
+def paginate_list(items: list, page: int, per_page: int = 10):
+    """Разбивает список на страницы"""
+    total = len(items)
+    pages = (total + per_page - 1) // per_page
+    start = page * per_page
+    end = start + per_page
+    return {
+        'items': items[start:end],
+        'page': page,
+        'pages': pages,
+        'total': total,
+        'has_prev': page > 0,
+        'has_next': page < pages - 1
+    }
 # =========================
 # 📊 Google Sheets
 # =========================
@@ -1674,44 +1688,24 @@ async def cmd_pet_online(message: types.Message):
     lambda c: c.data == "applications_menu",
     state="*"
 )
+@dp.callback_query_handler(lambda c: c.data == "applications_menu")
 async def applications_menu(callback: types.CallbackQuery):
     try:
         if callback.from_user.id not in ADMINS:
-            await callback.answer("❌ Только для админов", show_alert=True)
+            await callback.answer("❌", show_alert=True)
             return
 
-        apps = get_applications(status="ожидает")
-
-        keyboard = InlineKeyboardMarkup(row_width=1)
-
-        if not apps:
-            keyboard.add(
-                InlineKeyboardButton("📭 Нет заявок", callback_data="none")
-            )
-        else:
-            for app in apps:
-                keyboard.add(
-                    InlineKeyboardButton(
-                        f"📬 #{app[0]} | {app[1]}",
-                        callback_data=f"app_view_{app[0]}"
-                    )
-                )
-
-        keyboard.add(
-            InlineKeyboardButton("🟢 Принятые", callback_data="apps_accepted"),
-            InlineKeyboardButton("🔴 Отклонённые", callback_data="apps_rejected"),
-            InlineKeyboardButton("🏠 В меню", callback_data="back_menu")
+        kb = InlineKeyboardMarkup(row_width=1)
+        kb.add(
+            InlineKeyboardButton("🟢 Принятые заявки", callback_data="apps_accepted_0"),  # ← страница 0
+            InlineKeyboardButton("🔴 Отклонённые заявки", callback_data="apps_rejected_0"),  # ← страница 0
+            InlineKeyboardButton("🟡 Ожидающие", callback_data="apps_pending"),  # если нужно
+            InlineKeyboardButton("🏠 Главное меню", callback_data="back_menu")
         )
-
-        await callback.message.edit_text(
-            f"📬 Заявки\n🟡 Ожидает: {len(apps)}",
-            reply_markup=keyboard
-        )
-
+        await callback.message.edit_text("📬 Управление заявками:", reply_markup=kb)
         await callback.answer()
-
     except Exception as e:
-        logging.error(f"❌ applications_menu: {e}", exc_info=True)
+        logging.error(f"❌ applications_menu: {e}")
 
 @dp.callback_query_handler(
     lambda c: c.data.startswith("app_view_"),
@@ -1840,40 +1834,70 @@ async def app_reject(callback: types.CallbackQuery):
     lambda c: c.data in ["apps_accepted", "apps_rejected"],
     state="*"
 )
+@dp.callback_query_handler(
+    lambda c: c.data.startswith("apps_"),  # apps_accepted, apps_rejected, apps_page_...
+    state="*"
+)
 async def apps_archive(callback: types.CallbackQuery):
     try:
         if callback.from_user.id not in ADMINS:
             await callback.answer("❌", show_alert=True)
             return
 
-        is_accepted = callback.data == "apps_accepted"
+        # Парсим данные из callback
+        data = callback.data.split("_")
+        status_key = data[1]  # accepted / rejected
+        page = int(data[2]) if len(data) > 2 and data[2].isdigit() else 0
+
+        is_accepted = status_key == "accepted"
         status = "принят" if is_accepted else "отклонен"
 
-        apps = get_applications(status=status)
+        # Получаем все заявки и пагинируем
+        all_apps = get_applications(status=status)
+        paginated = paginate_list(all_apps, page, per_page=10)
 
-        kb = InlineKeyboardMarkup(row_width=1)
-        for app in apps[:10]:
-            kb.add(
-                InlineKeyboardButton(
-                    f"#{app[0]} | {app[1]}",
-                    callback_data=f"app_view_{app[0]}"
-                )
-            )
+        # Создаём клавиатуру
+        kb = InlineKeyboardMarkup(row_width=2)
 
-        kb.add(
-            InlineKeyboardButton("🔙 Назад", callback_data="applications_menu")
-        )
+        # Кнопки заявок
+        for app in paginated['items']:
+            kb.add(InlineKeyboardButton(
+                f"#{app[0]} | {app[1]}",  # ID | Никнейм
+                callback_data=f"app_view_{app[0]}"
+            ))
 
+        # Кнопки навигации
+        nav_row = []
+        if paginated['has_prev']:
+            nav_row.append(InlineKeyboardButton(
+                "◀️", callback_data=f"apps_{status_key}_{page - 1}"
+            ))
+        nav_row.append(InlineKeyboardButton(
+            f"📄 {page + 1}/{paginated['pages']}", callback_data="apps_pagination_info"
+        ))
+        if paginated['has_next']:
+            nav_row.append(InlineKeyboardButton(
+                "▶️", callback_data=f"apps_{status_key}_{page + 1}"
+            ))
+        if nav_row:
+            kb.row(*nav_row)
+
+        # Кнопка "Назад"
+        kb.add(InlineKeyboardButton("🔙 В меню заявок", callback_data="applications_menu"))
+
+        # Текст сообщения
+        header = "🟢 Принятые" if is_accepted else "🔴 Отклонённые"
         await callback.message.edit_text(
-            f"{'🟢 Принятые' if is_accepted else '🔴 Отклонённые'}\n"
-            f"Всего: {len(apps)}",
+            f"{header}\n"
+            f"Всего: {paginated['total']}\n"
+            f"Страница {page + 1} из {paginated['pages']}",
             reply_markup=kb
         )
-
         await callback.answer()
 
     except Exception as e:
         logging.error(f"❌ apps_archive: {e}", exc_info=True)
+        await callback.answer("❌ Ошибка загрузки", show_alert=True)
 
 
 # =========================
@@ -3566,13 +3590,13 @@ async def on_startup(_):
         logging.info("⏰ Задача 'weekly_report' добавлена")
 
         # Проверка девлогов: каждые 30 секунд
-        # scheduler.add_job(
-        #     check_new_devlogs,
-        #     trigger=CronTrigger(second="*/30", timezone=pytz.timezone("Europe/Moscow")),
-        #     id="check_devlogs",
-        #     replace_existing=True
-        # )
-        # logging.info("⏰ Задача 'check_devlogs' добавлена")
+        scheduler.add_job(
+            check_new_devlogs,
+            trigger=CronTrigger(second="*/120", timezone=pytz.timezone("Europe/Moscow")),
+            id="check_devlogs",
+            replace_existing=True
+        )
+        logging.info("⏰ Задача 'check_devlogs' добавлена")
 
         # Проверка оповещений: каждые 2 минуты
         # scheduler.add_job(
