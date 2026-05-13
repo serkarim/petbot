@@ -3592,7 +3592,7 @@ async def on_startup(_):
         # Проверка девлогов: каждые 30 секунд
         scheduler.add_job(
             check_new_devlogs,
-            trigger=CronTrigger(second="*/120", timezone=pytz.timezone("Europe/Moscow")),
+            trigger=CronTrigger(second="*/59", timezone=pytz.timezone("Europe/Moscow")),
             id="check_devlogs",
             replace_existing=True
         )
