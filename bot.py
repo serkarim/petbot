@@ -218,18 +218,43 @@ def update_application_status(app_id, new_status):
             return True
     return False
 
-def get_application_by_id(app_id):
-    ws = get_applications_sheet()
-    rows = ws.get_all_values()[1:]
-    for row in rows:
-        if row[0] == app_id:
-            return {
-                'id': row[0], 'nick': row[1], 'steam_id': row[2],
-                'tg_username': row[3], 'tg_id': row[4], 'date': row[5],
-                'status': row[6] if len(row) > 6 else 'ожидает'
-            }
-    return None
-
+def get_application_full(app_id: str) -> dict:
+    """Возвращает ВСЕ поля заявки по ID из таблицы 'Заявки на вступление'"""
+    try:
+        ws = get_applications_sheet()  # твоя существующая функция
+        rows = ws.get_all_values()[1:]  # пропускаем заголовок
+        for row in rows:
+            if len(row) >= 7 and row[0] == str(app_id):
+                return {
+                    'app_id': row[0],
+                    'steam_nick': row[1] if len(row) > 1 else '—',
+                    'steam_id': row[2] if len(row) > 2 else '—',
+                    'tg_username': row[3] if len(row) > 3 else '—',
+                    'tg_id': row[4] if len(row) > 4 else '—',
+                    'date': row[5] if len(row) > 5 else '—',
+                    'status': row[6] if len(row) > 6 else 'ожидает',
+                    'age': row[7] if len(row) > 7 else '—',
+                    'prime_time': row[8] if len(row) > 8 else '—',
+                    'preferred_role': row[9] if len(row) > 9 else '—',
+                    'other_games': row[10] if len(row) > 10 else '—',
+                    'about_me': row[11] if len(row) > 11 else '—'
+                }
+    except Exception as e:
+        logging.error(f"❌ get_application_full: {e}")
+    return {}
+def format_app_message(app: dict) -> str:
+    """Формирует текст заявки ИДЕНТИЧНО тому, что приходит админу при новой"""
+    return (
+        f"📬 Заявка #{app['app_id']}\n"
+        f"🎮 <code>{app['steam_nick']}</code>\n"
+        f"🆔 <code>{app['steam_id']}</code>\n"
+        f"🎂 {app['age']} лет | ⏰ {app['prime_time']}\n"
+        f"🎖 Роль: {app['preferred_role']}\n"
+        f"🎮 Игры: {app['other_games']}\n"
+        f"📝 О себе: {app['about_me']}\n"
+        f"👤 {app['tg_username']}\n"
+        f"🆔 <code>{app['tg_id']}</code>"
+    )
 def append_pred(member, reason):
     ws = sheet.worksheet("преды")
     date = get_msk_time().strftime("%d.%m.%Y")
@@ -1712,42 +1737,39 @@ async def applications_menu(callback: types.CallbackQuery):
     state="*"
 )
 async def app_view(callback: types.CallbackQuery):
+    if callback.from_user.id not in ADMINS:
+        await callback.answer("❌ Доступ запрещён", show_alert=True)
+        return
+
+    app_id = callback.data.replace("app_view_", "", 1)
+    app = get_application_full(app_id)
+
+    if not app or not app.get('app_id'):
+        await callback.answer("🔍 Заявка не найдена", show_alert=True)
+        return
+
+    text = format_app_message(app)
+
+    # Определяем статус для кнопки "Назад"
+    status = app.get("status", "").lower()
+    if "принят" in status:
+        st_key = "accepted"
+    elif "отклон" in status:
+        st_key = "rejected"
+    else:
+        st_key = "pending"  # на всякий случай
+
+    # 🔘 Только кнопка возврата. Кнопок действий НЕТ.
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton("🔙 В список заявок", callback_data=f"apps_{st_key}_0"))
+
     try:
-        if callback.from_user.id not in ADMINS:
-            await callback.answer("❌", show_alert=True)
-            return
-
-        app_id = callback.data.replace("app_view_", "")
-        app = get_application_by_id(app_id)
-
-        if not app:
-            await callback.answer("❌ Не найдено", show_alert=True)
-            return
-
-        kb = InlineKeyboardMarkup(row_width=2)
-        kb.add(
-            InlineKeyboardButton("✅ Принять", callback_data=f"app_accept_{app_id}"),
-            InlineKeyboardButton("❌ Отклонить", callback_data=f"app_reject_{app_id}")
-        )
-        kb.add(
-            InlineKeyboardButton("🔙 Назад", callback_data="applications_menu")
-        )
-
-        text = (
-            f"📬 Заявка #{app['id']}\n"
-            f"🎮 <code>{app['nick']}</code>\n"
-            f"🆔 <code>{app['steam_id']}</code>\n"
-            f"👤 {app['tg_username']}\n"
-            f"🆔 <code>{app['tg_id']}</code>\n"
-            f"🕒 {app['date']}\n"
-            f"🟡 {app['status']}"
-        )
-
         await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-        await callback.answer()
+    except:
+        # Фолбэк, если сообщение слишком старое для редактирования
+        await callback.message.answer(text, reply_markup=kb, parse_mode="HTML")
 
-    except Exception as e:
-        logging.error(f"❌ app_view: {e}", exc_info=True)
+    await callback.answer()
 @dp.callback_query_handler(
     lambda c: c.data.startswith("app_accept_"),
     state="*"
