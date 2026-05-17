@@ -1774,22 +1774,32 @@ async def app_view(callback: types.CallbackQuery):
     lambda c: c.data.startswith("app_accept_"),
     state="*"
 )
+@dp.callback_query_handler(
+    lambda c: c.data.startswith("app_accept_"),
+    state="*"
+)
 async def app_accept(callback: types.CallbackQuery):
     try:
         if callback.from_user.id not in ADMINS:
-            await callback.answer("❌", show_alert=True)
+            await callback.answer("❌ Только для админов", show_alert=True)
             return
 
-        app_id = callback.data.replace("app_accept_", "")
-        app = get_application_by_id(app_id)
+        # ✅ Убираем префикс и лишние пробелы
+        app_id = callback.data.replace("app_accept_", "").strip()
+        if not app_id:
+            await callback.answer("❌ Ошибка ID заявки", show_alert=True)
+            return
 
-        if not app:
-            await callback.answer("❌ Не найдено", show_alert=True)
+        # ✅ Используем существующую функцию
+        app = get_application_full(app_id)
+        if not app or not app.get('app_id'):
+            await callback.answer("❌ Заявка не найдена", show_alert=True)
             return
 
         update_application_status(app_id, "принят")
 
-        if add_new_member(app['nick'], app['steam_id'], app['tg_username'], app['tg_id']):
+        # ✅ Правильный ключ: 'steam_nick' вместо 'nick'
+        if add_new_member(app['steam_nick'], app['steam_id'], app['tg_username'], app['tg_id']):
             try:
                 await bot.send_message(
                     int(app['tg_id']),
@@ -1802,32 +1812,36 @@ async def app_accept(callback: types.CallbackQuery):
                 "ЗАЯВКА_ПРИНЯТА",
                 callback.from_user.full_name,
                 callback.from_user.id,
-                app['nick']
+                app['steam_nick']
             )
 
             await callback.answer("✅ Принято! Участник добавлен", show_alert=True)
         else:
-            await callback.answer("⚠️ Уже существует", show_alert=True)
+            await callback.answer("⚠️ Участник уже существует в таблице", show_alert=True)
 
         await applications_menu(callback)
-
     except Exception as e:
         logging.error(f"❌ app_accept: {e}", exc_info=True)
+        await callback.answer("❌ Внутренняя ошибка", show_alert=True)
+
 @dp.callback_query_handler(
     lambda c: c.data.startswith("app_reject_"),
     state="*"
-) #123
+)
 async def app_reject(callback: types.CallbackQuery):
     try:
         if callback.from_user.id not in ADMINS:
-            await callback.answer("❌", show_alert=True)
+            await callback.answer("❌ Только для админов", show_alert=True)
             return
 
-        app_id = callback.data.replace("app_reject_", "")
-        app = get_application_by_id(app_id)
+        app_id = callback.data.replace("app_reject_", "").strip()
+        if not app_id:
+            await callback.answer("❌ Ошибка ID заявки", show_alert=True)
+            return
 
-        if not app:
-            await callback.answer("❌ Не найдено", show_alert=True)
+        app = get_application_full(app_id)
+        if not app or not app.get('app_id'):
+            await callback.answer("❌ Заявка не найдена", show_alert=True)
             return
 
         update_application_status(app_id, "отклонен")
@@ -1835,7 +1849,7 @@ async def app_reject(callback: types.CallbackQuery):
         try:
             await bot.send_message(
                 int(app['tg_id']),
-                "❌ Заявка отклонена\nПопробуйте через 7 дней."
+                "❌ Заявка отклонена.\nПопробуйте подать новую через 7 дней."
             )
         except:
             pass
@@ -1844,14 +1858,14 @@ async def app_reject(callback: types.CallbackQuery):
             "ЗАЯВКА_ОТКЛОНЕНА",
             callback.from_user.full_name,
             callback.from_user.id,
-            app['nick']
+            app['steam_nick']
         )
 
         await callback.answer("❌ Отклонено", show_alert=True)
         await applications_menu(callback)
-
     except Exception as e:
         logging.error(f"❌ app_reject: {e}", exc_info=True)
+        await callback.answer("❌ Внутренняя ошибка", show_alert=True)
 @dp.callback_query_handler(
     lambda c: c.data in ["apps_accepted", "apps_rejected"],
     state="*"
